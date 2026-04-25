@@ -12,6 +12,26 @@ export interface CreateAppOptions {
 const defaultClientRoot = join(dirname(fileURLToPath(import.meta.url)), "../client");
 const localOriginPattern = /^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/;
 
+function getUrlPath(url: string) {
+  return new URL(url, "http://localhost").pathname;
+}
+
+function isApiPath(path: string) {
+  return path === "/api" || path.startsWith("/api/");
+}
+
+function isStaticAssetPath(path: string) {
+  const lastSegment = path.split("/").at(-1) ?? "";
+
+  return path.startsWith("/assets/") || /\.[^/.]+$/.test(lastSegment);
+}
+
+function shouldServeSpaFallback(method: string, url: string) {
+  const path = getUrlPath(url);
+
+  return method === "GET" && !isApiPath(path) && !isStaticAssetPath(path);
+}
+
 export function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const clientRoot = options.clientRoot ?? defaultClientRoot;
@@ -31,7 +51,7 @@ export function createApp(options: CreateAppOptions = {}) {
     app.register(fastifyStatic, { root: clientRoot });
 
     app.setNotFoundHandler((request, reply) => {
-      if (request.method === "GET" && !request.url.startsWith("/api")) {
+      if (shouldServeSpaFallback(request.method, request.url)) {
         return reply.type("text/html").sendFile("index.html");
       }
 
