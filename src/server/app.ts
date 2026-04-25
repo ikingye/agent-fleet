@@ -4,8 +4,11 @@ import fastify from "fastify";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getStateDatabasePath } from "./config/paths.js";
+import { registerRoutes } from "./routes/routes.js";
 
 export interface CreateAppOptions {
+  databasePath?: string;
   clientRoot?: string;
 }
 
@@ -45,6 +48,10 @@ export function createApp(options: CreateAppOptions = {}) {
 
   app.get("/api/health", async () => {
     return { ok: true, service: "agent-fleet" };
+  });
+
+  app.register(registerRoutes, {
+    databasePath: options.databasePath ?? getStateDatabasePath()
   });
 
   if (existsSync(clientIndex)) {
