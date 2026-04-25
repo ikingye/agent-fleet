@@ -14,6 +14,17 @@ type TaskActor = TaskEvent["actor"];
 type TaskSource = Task["source"];
 type Metadata = Record<string, unknown>;
 
+const INTERRUPTED_TASK_STATES: TaskState[] = [
+  "planned",
+  "worktree_ready",
+  "agent_running",
+  "changes_ready",
+  "checks_running",
+  "reviewing",
+  "merge_ready",
+  "retrying"
+];
+
 interface RepositoryRow {
   id: string;
   project_id: string;
@@ -326,6 +337,26 @@ export class RepositoryStore {
       .all("queued", limit) as unknown as TaskRow[];
 
     return rows.map(mapTask);
+  }
+
+  recoverInterruptedTasks(): Task[] {
+    const placeholders = INTERRUPTED_TASK_STATES.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `select * from tasks where state in (${placeholders}) order by created_at asc, id asc`
+      )
+      .all(...INTERRUPTED_TASK_STATES) as unknown as TaskRow[];
+    const tasks = rows.map(mapTask);
+
+    return tasks.map((task) =>
+      this.transitionTask(
+        task.id,
+        "queued",
+        "orchestrator",
+        "Recovered interrupted task after orchestrator restart",
+        { previousState: task.state }
+      )
+    );
   }
 
   transitionTask(

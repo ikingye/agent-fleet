@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createCommandRunner, type CommandResult, type CommandRunner } from "./commandRunner.js";
 
@@ -41,6 +42,17 @@ export async function createWorktree(
 
   const revParse = await runner.run("git", ["rev-parse", "HEAD"], { cwd: input.repositoryRoot });
   assertSuccess(revParse, "git rev-parse HEAD");
+
+  if (existsSync(worktreePath)) {
+    await assertRun(runner, "git", ["rev-parse", "--is-inside-work-tree"], worktreePath);
+
+    return {
+      repositoryId: input.repositoryId,
+      branch,
+      path: worktreePath,
+      baseCommit: revParse.stdout.trim()
+    };
+  }
 
   await assertRun(
     runner,

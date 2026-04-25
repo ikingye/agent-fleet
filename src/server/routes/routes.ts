@@ -109,6 +109,10 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
     enabled: options.autoDispatch ?? false
   });
 
+  if (options.autoDispatch === true) {
+    store.recoverInterruptedTasks();
+  }
+
   dispatcher.start();
 
   app.addHook("onClose", async () => {

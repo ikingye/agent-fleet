@@ -70,4 +70,42 @@ describe("RepositoryStore", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("recovers interrupted in-progress tasks back to the queue", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-fleet-store-"));
+    const dbPath = join(dir, "state.sqlite");
+    const db = openDatabase(dbPath);
+
+    try {
+      const store = new RepositoryStore(db.sql);
+      const project = store.createProject("agent-fleet");
+      const repository = store.createRepository({
+        projectId: project.id,
+        name: "agent-fleet",
+        rootPath: "/repo",
+        remoteUrl: "https://github.com/ikingye/agent-fleet",
+        mainBranch: "main"
+      });
+      const task = store.createTask({
+        repositoryId: repository.id,
+        title: "Continue interrupted work",
+        goal: "Recover an agent run after a service restart",
+        source: "local",
+        sourceUrl: null
+      });
+
+      store.transitionTask(task.id, "agent_running", "worker", "Agent running");
+
+      const recovered = store.recoverInterruptedTasks();
+
+      expect(recovered.map((recoveredTask) => recoveredTask.id)).toEqual([task.id]);
+      expect(store.getTask(task.id)?.state).toBe("queued");
+      expect(store.listTaskEvents(task.id).map((event) => event.message)).toContain(
+        "Recovered interrupted task after orchestrator restart"
+      );
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
