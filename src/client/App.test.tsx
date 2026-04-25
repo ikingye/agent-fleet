@@ -2,8 +2,18 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RemoteHost, RemoteHostDiagnostics } from "../shared/types.js";
+import type { RemoteHost, RemoteHostDiagnostics, Repository, Task } from "../shared/types.js";
 import { App } from "./App.js";
+
+const repository: Repository = {
+  id: "repo-1",
+  projectId: "project-1",
+  name: "agent-fleet",
+  rootPath: "/root/code/project/agent-fleet",
+  remoteUrl: "https://github.com/ikingye/agent-fleet.git",
+  mainBranch: "main",
+  createdAt: "2026-04-25T00:00:00.000Z"
+};
 
 const remoteHost: RemoteHost = {
   id: "remote-1",
@@ -47,6 +57,16 @@ describe("App", () => {
     expect(screen.getByPlaceholderText("Task title")).toBeInTheDocument();
   });
 
+  it("renders repository registration", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Projects" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Project name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Repository name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Repository root path")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add repository" })).toBeInTheDocument();
+  });
+
   it("renders remote node management", async () => {
     render(<App />);
 
@@ -65,6 +85,79 @@ describe("App", () => {
     expect(
       screen.getByText("Register a repository before creating tasks.")
     ).toBeInTheDocument();
+  });
+
+  it("creates a repository", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ repositories: [], tasks: [], remoteHosts: [] }))
+      .mockResolvedValueOnce(jsonResponse(repository))
+      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [], remoteHosts: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Project name"), "agent-fleet");
+    await user.type(screen.getByLabelText("Repository name"), "agent-fleet");
+    await user.type(screen.getByLabelText("Repository root path"), "/root/code/project/agent-fleet");
+    await user.type(screen.getByLabelText("Remote URL"), "https://github.com/ikingye/agent-fleet.git");
+    await user.click(screen.getByRole("button", { name: "Add repository" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/repositories",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectName: "agent-fleet",
+          name: "agent-fleet",
+          rootPath: "/root/code/project/agent-fleet",
+          remoteUrl: "https://github.com/ikingye/agent-fleet.git",
+          mainBranch: "main"
+        })
+      })
+    );
+    expect(await screen.findByText("/root/code/project/agent-fleet")).toBeInTheDocument();
+  });
+
+  it("queues a task against the registered repository", async () => {
+    const task: Task = {
+      id: "task-1",
+      repositoryId: repository.id,
+      title: "Continue agent-fleet",
+      goal: "Improve agent-managed parallel development.",
+      state: "queued",
+      source: "local",
+      sourceUrl: null,
+      createdAt: "2026-04-25T00:00:00.000Z",
+      updatedAt: "2026-04-25T00:00:00.000Z"
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [], remoteHosts: [] }))
+      .mockResolvedValueOnce(jsonResponse(task))
+      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [task], remoteHosts: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Task title"), "Continue agent-fleet");
+    await user.type(screen.getByLabelText("Goal and acceptance criteria"), "Improve agent-managed parallel development.");
+    await user.click(screen.getByRole("button", { name: "Queue task" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/tasks",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          repositoryId: "repo-1",
+          title: "Continue agent-fleet",
+          goal: "Improve agent-managed parallel development."
+        })
+      })
+    );
+    expect(await screen.findByText("Continue agent-fleet")).toBeInTheDocument();
   });
 
   it("creates a remote host", async () => {

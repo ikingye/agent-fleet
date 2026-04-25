@@ -6,6 +6,14 @@ export interface DashboardData {
   remoteHosts: RemoteHost[];
 }
 
+export interface CreateRepositoryPayload {
+  projectName: string;
+  name: string;
+  rootPath: string;
+  remoteUrl: string | null;
+  mainBranch: string;
+}
+
 export interface CreateRemoteHostPayload {
   name: string;
   sshHost: string;
@@ -23,6 +31,22 @@ export async function fetchDashboard(): Promise<DashboardData> {
   }
 
   return response.json() as Promise<DashboardData>;
+}
+
+export async function createRepository(payload: CreateRepositoryPayload): Promise<Repository> {
+  const response = await fetch("/api/repositories", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to register repository.");
+  }
+
+  return response.json() as Promise<Repository>;
 }
 
 export async function createTask(repositoryId: string, title: string, goal: string): Promise<Task> {

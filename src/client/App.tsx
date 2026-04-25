@@ -1,6 +1,13 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import type { RemoteHostDiagnostics, RemoteProxyMode } from "../shared/types.js";
-import { checkRemoteHost, createRemoteHost, createTask, type DashboardData, fetchDashboard } from "./api.js";
+import {
+  checkRemoteHost,
+  createRemoteHost,
+  createRepository,
+  createTask,
+  type DashboardData,
+  fetchDashboard
+} from "./api.js";
 
 const emptyDashboard: DashboardData = {
   repositories: [],
@@ -10,6 +17,11 @@ const emptyDashboard: DashboardData = {
 
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard);
+  const [projectName, setProjectName] = useState("");
+  const [repositoryName, setRepositoryName] = useState("");
+  const [repositoryRootPath, setRepositoryRootPath] = useState("");
+  const [repositoryRemoteUrl, setRepositoryRemoteUrl] = useState("");
+  const [repositoryMainBranch, setRepositoryMainBranch] = useState("main");
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
   const [remoteName, setRemoteName] = useState("");
@@ -50,6 +62,44 @@ export function App() {
       isMounted = false;
     };
   }, []);
+
+  async function submitRepository(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const trimmedProjectName = projectName.trim();
+    const trimmedRepositoryName = repositoryName.trim();
+    const trimmedRootPath = repositoryRootPath.trim();
+    const trimmedRemoteUrl = repositoryRemoteUrl.trim();
+    const trimmedMainBranch = repositoryMainBranch.trim();
+
+    if (
+      trimmedProjectName === "" ||
+      trimmedRepositoryName === "" ||
+      trimmedRootPath === "" ||
+      trimmedMainBranch === ""
+    ) {
+      setError("Project name, repository name, root path, and main branch are required.");
+      return;
+    }
+
+    try {
+      await createRepository({
+        projectName: trimmedProjectName,
+        name: trimmedRepositoryName,
+        rootPath: trimmedRootPath,
+        remoteUrl: trimmedRemoteUrl === "" ? null : trimmedRemoteUrl,
+        mainBranch: trimmedMainBranch
+      });
+      setProjectName("");
+      setRepositoryName("");
+      setRepositoryRootPath("");
+      setRepositoryRemoteUrl("");
+      setRepositoryMainBranch("main");
+      await refresh();
+    } catch (repositoryError) {
+      setError(repositoryError instanceof Error ? repositoryError.message : "Failed to register repository.");
+    }
+  }
 
   async function submitTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -156,6 +206,45 @@ export function App() {
             <p className="eyebrow">Workspace</p>
             <h2>Projects</h2>
           </div>
+
+          <form className="repository-form" onSubmit={(event) => void submitRepository(event)}>
+            <input
+              aria-label="Project name"
+              onChange={(event) => setProjectName(event.target.value)}
+              placeholder="Project name"
+              type="text"
+              value={projectName}
+            />
+            <input
+              aria-label="Repository name"
+              onChange={(event) => setRepositoryName(event.target.value)}
+              placeholder="Repository name"
+              type="text"
+              value={repositoryName}
+            />
+            <input
+              aria-label="Repository root path"
+              onChange={(event) => setRepositoryRootPath(event.target.value)}
+              placeholder="/absolute/path/to/repo"
+              type="text"
+              value={repositoryRootPath}
+            />
+            <input
+              aria-label="Remote URL"
+              onChange={(event) => setRepositoryRemoteUrl(event.target.value)}
+              placeholder="https://github.com/org/repo.git"
+              type="text"
+              value={repositoryRemoteUrl}
+            />
+            <input
+              aria-label="Main branch"
+              onChange={(event) => setRepositoryMainBranch(event.target.value)}
+              placeholder="main"
+              type="text"
+              value={repositoryMainBranch}
+            />
+            <button type="submit">Add repository</button>
+          </form>
 
           {dashboard.repositories.length === 0 ? (
             <p className="empty-copy">No repositories registered.</p>

@@ -75,6 +75,7 @@ h3 {
 }
 
 .secondary-button,
+.repository-form button,
 .task-form button,
 .remote-host-form button {
   border: 1px solid #1d252d;
@@ -167,6 +168,7 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.repository-form,
 .task-form,
 .remote-host-form {
   display: grid;
@@ -175,6 +177,7 @@ h3 {
   border-bottom: 1px solid #e1e7ea;
 }
 
+.repository-form input,
 .task-form input,
 .task-form textarea,
 .remote-host-form input,
@@ -192,6 +195,7 @@ h3 {
   resize: vertical;
 }
 
+.repository-form button,
 .task-form button,
 .remote-host-form button {
   min-height: 42px;
