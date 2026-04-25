@@ -15,6 +15,18 @@ CREATE TABLE IF NOT EXISTS repositories (
   created_at TEXT NOT NULL
 ) STRICT;
 
+CREATE TABLE IF NOT EXISTS remote_hosts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  ssh_host TEXT NOT NULL,
+  work_root TEXT NOT NULL,
+  proxy_mode TEXT NOT NULL,
+  proxy_url TEXT,
+  local_forward_port INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
 CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   repository_id TEXT NOT NULL REFERENCES repositories(id),

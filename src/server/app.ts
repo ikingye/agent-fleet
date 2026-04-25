@@ -5,11 +5,13 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getStateDatabasePath } from "./config/paths.js";
-import { registerRoutes } from "./routes/routes.js";
+import { registerRoutes, type RouteOptions } from "./routes/routes.js";
+import type { CommandRunner } from "./services/commandRunner.js";
 
 export interface CreateAppOptions {
   databasePath?: string;
   clientRoot?: string;
+  commandRunner?: CommandRunner;
 }
 
 const defaultClientRoot = join(dirname(fileURLToPath(import.meta.url)), "../client");
@@ -39,6 +41,13 @@ export function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const clientRoot = options.clientRoot ?? defaultClientRoot;
   const clientIndex = join(clientRoot, "index.html");
+  const routeOptions: RouteOptions = {
+    databasePath: options.databasePath ?? getStateDatabasePath()
+  };
+
+  if (options.commandRunner !== undefined) {
+    routeOptions.commandRunner = options.commandRunner;
+  }
 
   app.register(cors, {
     origin(origin, callback) {
@@ -50,9 +59,7 @@ export function createApp(options: CreateAppOptions = {}) {
     return { ok: true, service: "agent-fleet" };
   });
 
-  app.register(registerRoutes, {
-    databasePath: options.databasePath ?? getStateDatabasePath()
-  });
+  app.register(registerRoutes, routeOptions);
 
   if (existsSync(clientIndex)) {
     app.register(fastifyStatic, { root: clientRoot });

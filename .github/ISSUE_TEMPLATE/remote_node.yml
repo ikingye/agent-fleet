@@ -1,0 +1,33 @@
+name: Remote node setup help
+description: Get help with remote offload, SSH, or proxy fallback setup.
+title: "remote: "
+labels:
+  - remote-node
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Redact real hostnames, public IPs, private repository paths, and tokens before submitting.
+  - type: textarea
+    id: topology
+    attributes:
+      label: Topology
+      description: Describe local machine, remote OS, and how you connect.
+    validations:
+      required: true
+  - type: textarea
+    id: ssh-config
+    attributes:
+      label: Redacted SSH config
+      render: sshconfig
+  - type: textarea
+    id: checks
+    attributes:
+      label: Readiness check output
+      render: shell
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true

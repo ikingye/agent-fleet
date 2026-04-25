@@ -18,6 +18,10 @@ export type AgentKind = "codex" | "claude_code" | "gemini_cli";
 
 export type CheckStatus = "passed" | "failed" | "unavailable";
 
+export type RemoteProxyMode = "direct" | "http_proxy" | "auto";
+
+export type RemoteCheckStatus = "passed" | "failed" | "warning";
+
 export interface Project {
   id: string;
   name: string;
@@ -86,4 +90,30 @@ export interface CheckRun {
   status: CheckStatus;
   output: string;
   createdAt: string;
+}
+
+export interface RemoteHost {
+  id: string;
+  name: string;
+  sshHost: string;
+  workRoot: string;
+  proxyMode: RemoteProxyMode;
+  proxyUrl: string | null;
+  localForwardPort: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RemoteHostCheck {
+  name: string;
+  status: RemoteCheckStatus;
+  message: string;
+  output: string;
+}
+
+export interface RemoteHostDiagnostics {
+  host: RemoteHost;
+  checks: RemoteHostCheck[];
+  recommendedEnvironment: Record<string, string>;
+  checkedAt: string;
 }

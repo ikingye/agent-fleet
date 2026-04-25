@@ -1,16 +1,21 @@
 import type { FastifyInstance } from "fastify";
+import type { RemoteProxyMode } from "../../shared/types.js";
 import { openDatabase } from "../db/database.js";
 import { GitHubClient } from "../github/githubClient.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
 import { QualityGate } from "../quality/qualityGate.js";
+import { RemoteHostProbe } from "../remote/remoteHostProbe.js";
 import { RepositoryStore } from "../repositories/repositoryStore.js";
 import { ReviewGate } from "../review/reviewGate.js";
 import { CodexAdapter } from "../services/codexAdapter.js";
-import { createCommandRunner } from "../services/commandRunner.js";
+import { createCommandRunner, type CommandRunner } from "../services/commandRunner.js";
 import { createWorktree, mergeToMain } from "../services/worktreeManager.js";
+
+const DEFAULT_REMOTE_PROXY_URL = "http://127.0.0.1:1080";
 
 export interface RouteOptions {
   databasePath: string;
+  commandRunner?: CommandRunner;
 }
 
 function requireString(value: unknown, name: string): string {
@@ -43,12 +48,45 @@ function requireIssueNumber(value: unknown): number {
   return issueNumber;
 }
 
+function requireProxyMode(value: unknown): RemoteProxyMode {
+  const mode = requireString(value, "proxyMode");
+
+  if (mode !== "direct" && mode !== "http_proxy" && mode !== "auto") {
+    throw new Error("proxyMode must be direct, http_proxy, or auto");
+  }
+
+  return mode;
+}
+
+function optionalPort(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  const port = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error("localForwardPort must be a valid TCP port");
+  }
+
+  return port;
+}
+
+function normalizeProxyUrl(proxyMode: RemoteProxyMode, proxyUrl: string | null): string | null {
+  if (proxyMode === "direct") {
+    return null;
+  }
+
+  return proxyUrl ?? DEFAULT_REMOTE_PROXY_URL;
+}
+
 export async function registerRoutes(app: FastifyInstance, options: RouteOptions) {
   const db = openDatabase(options.databasePath);
   const store = new RepositoryStore(db.sql);
-  const runner = createCommandRunner();
+  const runner = options.commandRunner ?? createCommandRunner();
   const github = new GitHubClient(runner);
   const codexAdapter = new CodexAdapter(runner);
+  const remoteHostProbe = new RemoteHostProbe(runner);
   const worktreeManager = {
     createWorktree: (input: Parameters<typeof createWorktree>[0]) => createWorktree(input, runner),
     mergeToMain: (input: Parameters<typeof mergeToMain>[0]) => mergeToMain(input, runner)
@@ -70,7 +108,8 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
   app.get("/api/dashboard", async () => {
     return {
       repositories: store.listRepositories(),
-      tasks: store.listTasks()
+      tasks: store.listTasks(),
+      remoteHosts: store.listRemoteHosts()
     };
   });
 
@@ -97,6 +136,35 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
       source: "local",
       sourceUrl: null
     });
+  });
+
+  app.post("/api/remote-hosts", async (request) => {
+    const body = requestBody(request.body);
+    const proxyMode = requireProxyMode(body.proxyMode);
+
+    return store.createRemoteHost({
+      name: requireString(body.name, "name"),
+      sshHost: requireString(body.sshHost, "sshHost"),
+      workRoot: requireString(body.workRoot, "workRoot"),
+      proxyMode,
+      proxyUrl: normalizeProxyUrl(proxyMode, optionalString(body.proxyUrl)),
+      localForwardPort: optionalPort(body.localForwardPort)
+    });
+  });
+
+  app.post("/api/remote-hosts/:id/check", async (request, reply) => {
+    const params = request.params as { id?: string };
+    const host = store.getRemoteHost(requireString(params.id, "id"));
+
+    if (host === null) {
+      return reply.code(404).send({
+        error: "Not Found",
+        message: "Remote host not found",
+        statusCode: 404
+      });
+    }
+
+    return remoteHostProbe.check(host);
   });
 
   app.post("/api/github/issues/import", async (request) => {

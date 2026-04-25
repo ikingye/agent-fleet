@@ -42,4 +42,32 @@ describe("RepositoryStore", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it("persists remote execution hosts for offloaded agent work", () => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-fleet-store-"));
+    const dbPath = join(dir, "state.sqlite");
+    const db = openDatabase(dbPath);
+
+    try {
+      const store = new RepositoryStore(db.sql);
+
+      const host = store.createRemoteHost({
+        name: "remote-dev",
+        sshHost: "remote-dev",
+        workRoot: "/root/code/project",
+        proxyMode: "auto",
+        proxyUrl: "http://127.0.0.1:1080",
+        localForwardPort: 8788
+      });
+
+      expect(host.sshHost).toBe("remote-dev");
+      expect(host.proxyMode).toBe("auto");
+      expect(host.proxyUrl).toBe("http://127.0.0.1:1080");
+      expect(store.listRemoteHosts()).toEqual([host]);
+      expect(store.getRemoteHost(host.id)?.workRoot).toBe("/root/code/project");
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,15 +1,25 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import { createTask, type DashboardData, fetchDashboard } from "./api.js";
+import type { RemoteHostDiagnostics, RemoteProxyMode } from "../shared/types.js";
+import { checkRemoteHost, createRemoteHost, createTask, type DashboardData, fetchDashboard } from "./api.js";
 
 const emptyDashboard: DashboardData = {
   repositories: [],
-  tasks: []
+  tasks: [],
+  remoteHosts: []
 };
 
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard);
   const [title, setTitle] = useState("");
   const [goal, setGoal] = useState("");
+  const [remoteName, setRemoteName] = useState("");
+  const [sshHost, setSshHost] = useState("");
+  const [workRoot, setWorkRoot] = useState("");
+  const [proxyMode, setProxyMode] = useState<RemoteProxyMode>("auto");
+  const [proxyUrl, setProxyUrl] = useState("");
+  const [localForwardPort, setLocalForwardPort] = useState("");
+  const [checkingHostId, setCheckingHostId] = useState<string | null>(null);
+  const [hostChecksById, setHostChecksById] = useState<Record<string, RemoteHostDiagnostics>>({});
   const [error, setError] = useState<string | null>(null);
 
   const activeRepository = useMemo(() => dashboard.repositories[0], [dashboard.repositories]);
@@ -56,6 +66,69 @@ export function App() {
       await refresh();
     } catch (taskError) {
       setError(taskError instanceof Error ? taskError.message : "Failed to queue task.");
+    }
+  }
+
+  async function submitRemoteHost(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const trimmedName = remoteName.trim();
+    const trimmedSshHost = sshHost.trim();
+    const trimmedWorkRoot = workRoot.trim();
+    const trimmedProxyUrl = proxyUrl.trim();
+    const trimmedForwardPort = localForwardPort.trim();
+    const parsedForwardPort = trimmedForwardPort === "" ? null : Number(trimmedForwardPort);
+    const normalizedProxyUrl =
+      proxyMode === "direct" ? null : trimmedProxyUrl === "" ? "http://127.0.0.1:1080" : trimmedProxyUrl;
+
+    if (trimmedName === "" || trimmedSshHost === "" || trimmedWorkRoot === "") {
+      setError("Remote node name, SSH host, and work root are required.");
+      return;
+    }
+
+    if (
+      parsedForwardPort !== null &&
+      (!Number.isInteger(parsedForwardPort) || parsedForwardPort <= 0 || parsedForwardPort > 65535)
+    ) {
+      setError("Local forward port must be a valid TCP port.");
+      return;
+    }
+
+    try {
+      await createRemoteHost({
+        name: trimmedName,
+        sshHost: trimmedSshHost,
+        workRoot: trimmedWorkRoot,
+        proxyMode,
+        proxyUrl: normalizedProxyUrl,
+        localForwardPort: parsedForwardPort
+      });
+      setRemoteName("");
+      setSshHost("");
+      setWorkRoot("");
+      setProxyMode("auto");
+      setProxyUrl("");
+      setLocalForwardPort("");
+      await refresh();
+    } catch (remoteHostError) {
+      setError(remoteHostError instanceof Error ? remoteHostError.message : "Failed to register remote host.");
+    }
+  }
+
+  async function runRemoteHostCheck(hostId: string) {
+    setCheckingHostId(hostId);
+
+    try {
+      const diagnostics = await checkRemoteHost(hostId);
+      setHostChecksById((current) => ({
+        ...current,
+        [hostId]: diagnostics
+      }));
+      setError(null);
+    } catch (checkError) {
+      setError(checkError instanceof Error ? checkError.message : "Failed to check remote host.");
+    } finally {
+      setCheckingHostId(null);
     }
   }
 
@@ -138,15 +211,107 @@ export function App() {
           )}
         </section>
 
-        <section className="panel active-run-panel">
+        <section className="panel remote-host-panel">
           <div className="panel-heading">
             <p className="eyebrow">Execution</p>
-            <h2>Active Run</h2>
+            <h2>Remote Nodes</h2>
           </div>
-          <p className="plan-copy">
-            Plan, worktree, agent logs, checks, review, merge, and push status will appear here as
-            queued tasks move through the local orchestrator.
-          </p>
+
+          <form className="remote-host-form" onSubmit={(event) => void submitRemoteHost(event)}>
+            <input
+              aria-label="Node name"
+              onChange={(event) => setRemoteName(event.target.value)}
+              placeholder="Node name"
+              type="text"
+              value={remoteName}
+            />
+            <input
+              aria-label="SSH host"
+              onChange={(event) => setSshHost(event.target.value)}
+              placeholder="SSH host"
+              type="text"
+              value={sshHost}
+            />
+            <input
+              aria-label="Work root"
+              onChange={(event) => setWorkRoot(event.target.value)}
+              placeholder="Work root"
+              type="text"
+              value={workRoot}
+            />
+            <select
+              aria-label="Proxy mode"
+              onChange={(event) => setProxyMode(event.target.value as RemoteProxyMode)}
+              value={proxyMode}
+            >
+              <option value="auto">Auto proxy fallback</option>
+              <option value="direct">Direct only</option>
+              <option value="http_proxy">HTTP proxy</option>
+            </select>
+            <input
+              aria-label="Proxy URL"
+              onChange={(event) => setProxyUrl(event.target.value)}
+              placeholder="http://127.0.0.1:1080"
+              type="text"
+              value={proxyUrl}
+            />
+            <input
+              aria-label="Local forward port"
+              inputMode="numeric"
+              onChange={(event) => setLocalForwardPort(event.target.value)}
+              placeholder="8788"
+              type="text"
+              value={localForwardPort}
+            />
+            <button type="submit">Add remote node</button>
+          </form>
+
+          {dashboard.remoteHosts.length === 0 ? (
+            <p className="empty-copy">No remote execution nodes registered.</p>
+          ) : (
+            <div className="remote-host-list">
+              {dashboard.remoteHosts.map((host) => {
+                const diagnostics = hostChecksById[host.id];
+
+                return (
+                  <article className="remote-host-row" key={host.id}>
+                    <div className="remote-host-main">
+                      <div>
+                        <h3>{host.name}</h3>
+                        <p className="remote-host-meta">{host.sshHost}</p>
+                        <p className="remote-host-meta">{host.workRoot}</p>
+                        <p className="remote-host-meta">
+                          {host.proxyMode}
+                          {host.proxyUrl ? ` / ${host.proxyUrl}` : ""}
+                        </p>
+                      </div>
+                      <button
+                        aria-label={`Check ${host.name}`}
+                        className="secondary-button compact-button"
+                        disabled={checkingHostId === host.id}
+                        onClick={() => void runRemoteHostCheck(host.id)}
+                        type="button"
+                      >
+                        {checkingHostId === host.id ? "Checking" : "Check"}
+                      </button>
+                    </div>
+
+                    {diagnostics ? (
+                      <div className="remote-check-list">
+                        {diagnostics.checks.map((check) => (
+                          <div className="remote-check-row" key={check.name}>
+                            <span>{check.name}</span>
+                            <span className={`check-status check-${check.status}`}>{check.status}</span>
+                            <p>{check.message}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </section>
       </section>
     </main>

@@ -1,8 +1,26 @@
 {
   "name": "agent-fleet",
   "version": "0.1.0",
-  "private": true,
+  "description": "A local-first control plane for orchestrating coding agents across git worktrees and remote execution nodes.",
+  "license": "Apache-2.0",
   "type": "module",
+  "homepage": "https://github.com/ikingye/agent-fleet#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikingye/agent-fleet.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ikingye/agent-fleet/issues"
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "automation",
+    "codex",
+    "git-worktree",
+    "orchestration",
+    "remote-development"
+  ],
   "engines": {
     "node": ">=24.0.0",
     "npm": ">=10.0.0"
@@ -19,7 +37,8 @@
     "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "check": "npm run typecheck && npm run lint && npm run test"
+    "check:community": "node scripts/check-community.mjs",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run check:community"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

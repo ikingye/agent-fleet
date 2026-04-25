@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { Project, Repository, Task, TaskEvent, TaskState } from "../../shared/types.js";
+import type {
+  Project,
+  RemoteHost,
+  RemoteProxyMode,
+  Repository,
+  Task,
+  TaskEvent,
+  TaskState
+} from "../../shared/types.js";
 
 type TaskActor = TaskEvent["actor"];
 type TaskSource = Task["source"];
@@ -14,6 +22,18 @@ interface RepositoryRow {
   remote_url: string | null;
   main_branch: string;
   created_at: string;
+}
+
+interface RemoteHostRow {
+  id: string;
+  name: string;
+  ssh_host: string;
+  work_root: string;
+  proxy_mode: RemoteProxyMode;
+  proxy_url: string | null;
+  local_forward_port: number | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface TaskRow {
@@ -46,6 +66,15 @@ export interface CreateRepositoryInput {
   mainBranch: string;
 }
 
+export interface CreateRemoteHostInput {
+  name: string;
+  sshHost: string;
+  workRoot: string;
+  proxyMode: RemoteProxyMode;
+  proxyUrl: string | null;
+  localForwardPort: number | null;
+}
+
 export interface CreateTaskInput {
   repositoryId: string;
   title: string;
@@ -67,6 +96,20 @@ function mapRepository(row: RepositoryRow): Repository {
     remoteUrl: row.remote_url,
     mainBranch: row.main_branch,
     createdAt: row.created_at
+  };
+}
+
+function mapRemoteHost(row: RemoteHostRow): RemoteHost {
+  return {
+    id: row.id,
+    name: row.name,
+    sshHost: row.ssh_host,
+    workRoot: row.work_root,
+    proxyMode: row.proxy_mode,
+    proxyUrl: row.proxy_url,
+    localForwardPort: row.local_forward_port,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   };
 }
 
@@ -163,6 +206,57 @@ export class RepositoryStore {
             .all(projectId) as unknown as RepositoryRow[]);
 
     return rows.map(mapRepository);
+  }
+
+  createRemoteHost(input: CreateRemoteHostInput): RemoteHost {
+    const timestamp = now();
+    const host: RemoteHost = {
+      id: randomUUID(),
+      name: input.name,
+      sshHost: input.sshHost,
+      workRoot: input.workRoot,
+      proxyMode: input.proxyMode,
+      proxyUrl: input.proxyUrl,
+      localForwardPort: input.localForwardPort,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.db
+      .prepare(
+        `
+        insert into remote_hosts
+          (id, name, ssh_host, work_root, proxy_mode, proxy_url, local_forward_port, created_at, updated_at)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+      )
+      .run(
+        host.id,
+        host.name,
+        host.sshHost,
+        host.workRoot,
+        host.proxyMode,
+        host.proxyUrl,
+        host.localForwardPort,
+        host.createdAt,
+        host.updatedAt
+      );
+
+    return host;
+  }
+
+  getRemoteHost(id: string): RemoteHost | null {
+    const row = this.db.prepare("select * from remote_hosts where id = ?").get(id) as RemoteHostRow | undefined;
+
+    return row === undefined ? null : mapRemoteHost(row);
+  }
+
+  listRemoteHosts(): RemoteHost[] {
+    const rows = this.db
+      .prepare("select * from remote_hosts order by created_at asc, id asc")
+      .all() as unknown as RemoteHostRow[];
+
+    return rows.map(mapRemoteHost);
   }
 
   createTask(input: CreateTaskInput): Task {

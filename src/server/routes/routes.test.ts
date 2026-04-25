@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { CommandRunner } from "../services/commandRunner.js";
 import { createApp } from "../app.js";
 
 describe("API routes", () => {
@@ -63,6 +64,73 @@ describe("API routes", () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.json()).toEqual({ ran: false });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("creates remote hosts, shows them on the dashboard, and probes ssh proxy readiness", async () => {
+    const runner: CommandRunner = {
+      async run(_command, args) {
+        const commandText = args.at(-1) ?? "";
+
+        if (args.includes("-G")) {
+          return {
+            exitCode: 0,
+            stdout: "remoteforward [127.0.0.1]:1080 [127.0.0.1]:1080\n",
+            stderr: ""
+          };
+        }
+
+        if (commandText === "uname -s") {
+          return { exitCode: 0, stdout: "Linux\n", stderr: "" };
+        }
+
+        if (commandText.includes("command -v git")) {
+          return { exitCode: 0, stdout: "/usr/bin/git\n/usr/bin/node\n/usr/local/bin/codex\n", stderr: "" };
+        }
+
+        if (commandText.includes("api.github.com") && !commandText.includes("HTTPS_PROXY=")) {
+          return { exitCode: 28, stdout: "", stderr: "timeout" };
+        }
+
+        return { exitCode: 0, stdout: "HTTP/2 200\n", stderr: "" };
+      }
+    };
+    const app = createApp({ databasePath: join(stateRoot, "state.sqlite"), commandRunner: runner });
+
+    try {
+      const hostResponse = await app.inject({
+        method: "POST",
+        url: "/api/remote-hosts",
+        payload: {
+          name: "remote-dev",
+          sshHost: "remote-dev",
+          workRoot: "/root/code/project",
+          proxyMode: "auto",
+          localForwardPort: 8788
+        }
+      });
+
+      expect(hostResponse.statusCode).toBe(200);
+      const host = hostResponse.json();
+      expect(host.proxyUrl).toBe("http://127.0.0.1:1080");
+
+      const dashboardResponse = await app.inject({ method: "GET", url: "/api/dashboard" });
+
+      expect(dashboardResponse.statusCode).toBe(200);
+      expect(dashboardResponse.json().remoteHosts).toHaveLength(1);
+
+      const checkResponse = await app.inject({
+        method: "POST",
+        url: `/api/remote-hosts/${host.id}/check`
+      });
+
+      expect(checkResponse.statusCode).toBe(200);
+      expect(checkResponse.json().checks.map((check: { name: string; status: string }) => [check.name, check.status]))
+        .toContainEqual(["github_proxy", "passed"]);
+      expect(checkResponse.json().checks.map((check: { name: string; status: string }) => [check.name, check.status]))
+        .toContainEqual(["github_direct", "warning"]);
     } finally {
       await app.close();
     }

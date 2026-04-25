@@ -1,8 +1,18 @@
-import type { Repository, Task } from "../shared/types.js";
+import type { RemoteHost, RemoteHostDiagnostics, RemoteProxyMode, Repository, Task } from "../shared/types.js";
 
 export interface DashboardData {
   repositories: Repository[];
   tasks: Task[];
+  remoteHosts: RemoteHost[];
+}
+
+export interface CreateRemoteHostPayload {
+  name: string;
+  sshHost: string;
+  workRoot: string;
+  proxyMode: RemoteProxyMode;
+  proxyUrl: string | null;
+  localForwardPort: number | null;
 }
 
 export async function fetchDashboard(): Promise<DashboardData> {
@@ -29,4 +39,32 @@ export async function createTask(repositoryId: string, title: string, goal: stri
   }
 
   return response.json() as Promise<Task>;
+}
+
+export async function createRemoteHost(payload: CreateRemoteHostPayload): Promise<RemoteHost> {
+  const response = await fetch("/api/remote-hosts", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to register remote host.");
+  }
+
+  return response.json() as Promise<RemoteHost>;
+}
+
+export async function checkRemoteHost(id: string): Promise<RemoteHostDiagnostics> {
+  const response = await fetch(`/api/remote-hosts/${id}/check`, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to check remote host.");
+  }
+
+  return response.json() as Promise<RemoteHostDiagnostics>;
 }
