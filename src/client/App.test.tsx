@@ -2,7 +2,7 @@ import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RemoteHost, RemoteHostDiagnostics, Repository, Task } from "../shared/types.js";
+import type { RemoteHost, RemoteHostDiagnostics, Repository, Task, TaskEvent } from "../shared/types.js";
 import { App } from "./App.js";
 
 const repository: Repository = {
@@ -25,6 +25,28 @@ const remoteHost: RemoteHost = {
   localForwardPort: 8788,
   createdAt: "2026-04-25T00:00:00.000Z",
   updatedAt: "2026-04-25T00:00:00.000Z"
+};
+
+const queuedTask: Task = {
+  id: "task-1",
+  repositoryId: repository.id,
+  title: "Continue agent-fleet",
+  goal: "Improve agent-managed parallel development.",
+  state: "queued",
+  source: "local",
+  sourceUrl: null,
+  createdAt: "2026-04-25T00:00:00.000Z",
+  updatedAt: "2026-04-25T00:00:00.000Z"
+};
+
+const queuedEvent: TaskEvent = {
+  id: "event-1",
+  taskId: queuedTask.id,
+  actor: "user",
+  state: "queued",
+  message: "Task queued",
+  metadataJson: "{}",
+  createdAt: "2026-04-25T00:00:00.000Z"
 };
 
 function jsonResponse(value: unknown) {
@@ -75,6 +97,66 @@ describe("App", () => {
     expect(screen.getByText("No remote execution nodes registered.")).toBeInTheDocument();
   });
 
+  it("renders task progress controls and event timeline", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(
+        jsonResponse({
+          repositories: [repository],
+          tasks: [queuedTask],
+          taskEventsByTaskId: { [queuedTask.id]: [queuedEvent] },
+          remoteHosts: []
+        })
+      )
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Run next task" })).toBeInTheDocument();
+    expect(screen.getByText("Task queued")).toBeInTheDocument();
+    expect(screen.getByText("user")).toBeInTheDocument();
+  });
+
+  it("runs the next queued task and refreshes progress", async () => {
+    const plannedTask: Task = { ...queuedTask, state: "planned" };
+    const plannedEvent: TaskEvent = {
+      ...queuedEvent,
+      id: "event-2",
+      actor: "orchestrator",
+      state: "planned",
+      message: "Task planned"
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          repositories: [repository],
+          tasks: [queuedTask],
+          taskEventsByTaskId: { [queuedTask.id]: [queuedEvent] },
+          remoteHosts: []
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ ran: true }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          repositories: [repository],
+          tasks: [plannedTask],
+          taskEventsByTaskId: { [queuedTask.id]: [queuedEvent, plannedEvent] },
+          remoteHosts: []
+        })
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Run next task" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/orchestrator/run-once", { method: "POST" });
+    expect(await screen.findByText("Task planned")).toBeInTheDocument();
+    expect(screen.getAllByText("planned").length).toBeGreaterThan(0);
+  });
+
   it("shows an error when queueing a task without a repository", async () => {
     const user = userEvent.setup();
 
@@ -121,22 +203,11 @@ describe("App", () => {
   });
 
   it("queues a task against the registered repository", async () => {
-    const task: Task = {
-      id: "task-1",
-      repositoryId: repository.id,
-      title: "Continue agent-fleet",
-      goal: "Improve agent-managed parallel development.",
-      state: "queued",
-      source: "local",
-      sourceUrl: null,
-      createdAt: "2026-04-25T00:00:00.000Z",
-      updatedAt: "2026-04-25T00:00:00.000Z"
-    };
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [], remoteHosts: [] }))
-      .mockResolvedValueOnce(jsonResponse(task))
-      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [task], remoteHosts: [] }));
+      .mockResolvedValueOnce(jsonResponse(queuedTask))
+      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [queuedTask], remoteHosts: [] }));
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 

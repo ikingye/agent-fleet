@@ -23,6 +23,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .app-shell {
   min-height: 100vh;
   background:
@@ -116,6 +121,13 @@ h3 {
   border-bottom: 1px solid #e1e7ea;
 }
 
+.panel-heading-with-action {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
 .empty-copy,
 .plan-copy {
   margin: 0;
@@ -207,6 +219,40 @@ h3 {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: 14px;
+}
+
+.task-event-list {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border-top: 1px solid #e1e7ea;
+  padding: 12px 0 0;
+  list-style: none;
+}
+
+.task-event-row {
+  display: grid;
+  grid-template-columns: minmax(78px, auto) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-event-actor {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #edf2f4;
+  color: #33414b;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.task-event-message {
+  color: #33414b;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .task-state {
@@ -314,6 +360,11 @@ h3 {
   }
 
   .remote-host-main {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-heading-with-action,
+  .task-event-row {
     grid-template-columns: 1fr;
   }
 }

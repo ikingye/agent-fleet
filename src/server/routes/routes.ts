@@ -106,9 +106,12 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
   });
 
   app.get("/api/dashboard", async () => {
+    const tasks = store.listTasks();
+
     return {
       repositories: store.listRepositories(),
-      tasks: store.listTasks(),
+      tasks,
+      taskEventsByTaskId: Object.fromEntries(tasks.map((task) => [task.id, store.listTaskEvents(task.id)])),
       remoteHosts: store.listRemoteHosts()
     };
   });

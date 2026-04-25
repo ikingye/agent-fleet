@@ -6,12 +6,14 @@ import {
   createRepository,
   createTask,
   type DashboardData,
-  fetchDashboard
+  fetchDashboard,
+  runOrchestratorOnce
 } from "./api.js";
 
 const emptyDashboard: DashboardData = {
   repositories: [],
   tasks: [],
+  taskEventsByTaskId: {},
   remoteHosts: []
 };
 
@@ -31,10 +33,12 @@ export function App() {
   const [proxyUrl, setProxyUrl] = useState("");
   const [localForwardPort, setLocalForwardPort] = useState("");
   const [checkingHostId, setCheckingHostId] = useState<string | null>(null);
+  const [orchestratorRunning, setOrchestratorRunning] = useState(false);
   const [hostChecksById, setHostChecksById] = useState<Record<string, RemoteHostDiagnostics>>({});
   const [error, setError] = useState<string | null>(null);
 
   const activeRepository = useMemo(() => dashboard.repositories[0], [dashboard.repositories]);
+  const hasQueuedTask = useMemo(() => dashboard.tasks.some((task) => task.state === "queued"), [dashboard.tasks]);
 
   async function refresh() {
     const nextDashboard = await fetchDashboard();
@@ -62,6 +66,24 @@ export function App() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!orchestratorRunning) {
+      return undefined;
+    }
+
+    const timer = window.setInterval(() => {
+      void fetchDashboard()
+        .then((nextDashboard) => {
+          setDashboard(nextDashboard);
+        })
+        .catch(() => {
+          // The foreground run will surface the actionable error.
+        });
+    }, 1500);
+
+    return () => window.clearInterval(timer);
+  }, [orchestratorRunning]);
 
   async function submitRepository(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -116,6 +138,23 @@ export function App() {
       await refresh();
     } catch (taskError) {
       setError(taskError instanceof Error ? taskError.message : "Failed to queue task.");
+    }
+  }
+
+  async function runNextTask() {
+    setOrchestratorRunning(true);
+
+    try {
+      const result = await runOrchestratorOnce();
+      await refresh();
+
+      if (!result.ran) {
+        setError("No queued task is ready to run.");
+      }
+    } catch (runError) {
+      setError(runError instanceof Error ? runError.message : "Failed to run orchestrator.");
+    } finally {
+      setOrchestratorRunning(false);
     }
   }
 
@@ -261,9 +300,19 @@ export function App() {
         </section>
 
         <section className="panel task-panel">
-          <div className="panel-heading">
-            <p className="eyebrow">Dispatch</p>
-            <h2>Task Queue</h2>
+          <div className="panel-heading panel-heading-with-action">
+            <div>
+              <p className="eyebrow">Dispatch</p>
+              <h2>Task Queue</h2>
+            </div>
+            <button
+              className="secondary-button compact-button"
+              disabled={orchestratorRunning || !hasQueuedTask}
+              onClick={() => void runNextTask()}
+              type="button"
+            >
+              {orchestratorRunning ? "Running" : "Run next task"}
+            </button>
           </div>
 
           <form className="task-form" onSubmit={(event) => void submitTask(event)}>
@@ -287,15 +336,31 @@ export function App() {
             <p className="empty-copy">No queued tasks.</p>
           ) : (
             <div className="task-list">
-              {dashboard.tasks.map((task) => (
-                <article className="task-row" key={task.id}>
-                  <div>
-                    <h3>{task.title}</h3>
-                    <p>{task.goal}</p>
-                  </div>
-                  <span className={`task-state state-${task.state}`}>{task.state}</span>
-                </article>
-              ))}
+              {dashboard.tasks.map((task) => {
+                const events = dashboard.taskEventsByTaskId?.[task.id] ?? [];
+
+                return (
+                  <article className="task-row" key={task.id}>
+                    <div>
+                      <h3>{task.title}</h3>
+                      <p>{task.goal}</p>
+                    </div>
+                    <span className={`task-state state-${task.state}`}>{task.state}</span>
+
+                    {events.length > 0 ? (
+                      <ol aria-label={`Progress for ${task.title}`} className="task-event-list">
+                        {events.map((event) => (
+                          <li className="task-event-row" key={event.id}>
+                            <span className="task-event-actor">{event.actor}</span>
+                            <span className="task-event-message">{event.message}</span>
+                            <span className={`task-state state-${event.state}`}>{event.state}</span>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : null}
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>

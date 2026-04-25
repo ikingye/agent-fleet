@@ -46,11 +46,14 @@ describe("API routes", () => {
       });
 
       expect(taskResponse.statusCode).toBe(200);
+      const task = taskResponse.json();
 
       const dashboardResponse = await app.inject({ method: "GET", url: "/api/dashboard" });
 
       expect(dashboardResponse.statusCode).toBe(200);
       expect(dashboardResponse.json().tasks).toHaveLength(1);
+      expect(dashboardResponse.json().taskEventsByTaskId[task.id].map((event: { message: string }) => event.message))
+        .toContain("Task queued");
     } finally {
       await app.close();
     }

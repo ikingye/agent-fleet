@@ -1,8 +1,9 @@
-import type { RemoteHost, RemoteHostDiagnostics, RemoteProxyMode, Repository, Task } from "../shared/types.js";
+import type { RemoteHost, RemoteHostDiagnostics, RemoteProxyMode, Repository, Task, TaskEvent } from "../shared/types.js";
 
 export interface DashboardData {
   repositories: Repository[];
   tasks: Task[];
+  taskEventsByTaskId: Record<string, TaskEvent[]>;
   remoteHosts: RemoteHost[];
 }
 
@@ -23,6 +24,10 @@ export interface CreateRemoteHostPayload {
   localForwardPort: number | null;
 }
 
+export interface OrchestratorRunResult {
+  ran: boolean;
+}
+
 export async function fetchDashboard(): Promise<DashboardData> {
   const response = await fetch("/api/dashboard");
 
@@ -31,6 +36,18 @@ export async function fetchDashboard(): Promise<DashboardData> {
   }
 
   return response.json() as Promise<DashboardData>;
+}
+
+export async function runOrchestratorOnce(): Promise<OrchestratorRunResult> {
+  const response = await fetch("/api/orchestrator/run-once", {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to run orchestrator.");
+  }
+
+  return response.json() as Promise<OrchestratorRunResult>;
 }
 
 export async function createRepository(payload: CreateRepositoryPayload): Promise<Repository> {
