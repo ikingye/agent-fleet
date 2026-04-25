@@ -60,6 +60,16 @@ export interface TaskEvent {
   createdAt: string;
 }
 
+export interface DispatcherStatus {
+  enabled: boolean;
+  running: boolean;
+  intervalMs: number;
+  lastRunStartedAt: string | null;
+  lastRunFinishedAt: string | null;
+  lastRunHadTask: boolean | null;
+  lastError: string | null;
+}
+
 export interface WorktreeRecord {
   id: string;
   taskId: string;

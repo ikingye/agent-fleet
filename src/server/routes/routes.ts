@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { RemoteProxyMode } from "../../shared/types.js";
 import { openDatabase } from "../db/database.js";
 import { GitHubClient } from "../github/githubClient.js";
+import { AutoDispatcher } from "../orchestrator/autoDispatcher.js";
 import { Orchestrator } from "../orchestrator/orchestrator.js";
 import { QualityGate } from "../quality/qualityGate.js";
 import { RemoteHostProbe } from "../remote/remoteHostProbe.js";
@@ -16,6 +17,8 @@ const DEFAULT_REMOTE_PROXY_URL = "http://127.0.0.1:1080";
 export interface RouteOptions {
   databasePath: string;
   commandRunner?: CommandRunner;
+  autoDispatch?: boolean;
+  dispatchIntervalMs?: number;
 }
 
 function requireString(value: unknown, name: string): string {
@@ -100,8 +103,16 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
     qualityGate,
     reviewGate
   });
+  const dispatcher = new AutoDispatcher({
+    orchestrator,
+    intervalMs: options.dispatchIntervalMs ?? 5000,
+    enabled: options.autoDispatch ?? false
+  });
+
+  dispatcher.start();
 
   app.addHook("onClose", async () => {
+    dispatcher.stop();
     db.close();
   });
 
@@ -112,6 +123,7 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
       repositories: store.listRepositories(),
       tasks,
       taskEventsByTaskId: Object.fromEntries(tasks.map((task) => [task.id, store.listTaskEvents(task.id)])),
+      dispatcher: dispatcher.status(),
       remoteHosts: store.listRemoteHosts()
     };
   });
@@ -187,6 +199,6 @@ export async function registerRoutes(app: FastifyInstance, options: RouteOptions
   });
 
   app.post("/api/orchestrator/run-once", async () => {
-    return { ran: await orchestrator.runNext() };
+    return { ran: await dispatcher.runNow() };
   });
 }

@@ -52,8 +52,31 @@ describe("API routes", () => {
 
       expect(dashboardResponse.statusCode).toBe(200);
       expect(dashboardResponse.json().tasks).toHaveLength(1);
+      expect(dashboardResponse.json().dispatcher.enabled).toBe(false);
       expect(dashboardResponse.json().taskEventsByTaskId[task.id].map((event: { message: string }) => event.message))
         .toContain("Task queued");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("shows auto dispatcher status on the dashboard when enabled", async () => {
+    const app = createApp({
+      databasePath: join(stateRoot, "state.sqlite"),
+      autoDispatch: true,
+      dispatchIntervalMs: 25
+    });
+
+    try {
+      const dashboardResponse = await app.inject({ method: "GET", url: "/api/dashboard" });
+
+      expect(dashboardResponse.statusCode).toBe(200);
+      expect(dashboardResponse.json().dispatcher).toEqual(
+        expect.objectContaining({
+          enabled: true,
+          intervalMs: 25
+        })
+      );
     } finally {
       await app.close();
     }

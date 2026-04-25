@@ -1,9 +1,18 @@
-import type { RemoteHost, RemoteHostDiagnostics, RemoteProxyMode, Repository, Task, TaskEvent } from "../shared/types.js";
+import type {
+  DispatcherStatus,
+  RemoteHost,
+  RemoteHostDiagnostics,
+  RemoteProxyMode,
+  Repository,
+  Task,
+  TaskEvent
+} from "../shared/types.js";
 
 export interface DashboardData {
   repositories: Repository[];
   tasks: Task[];
   taskEventsByTaskId: Record<string, TaskEvent[]>;
+  dispatcher: DispatcherStatus;
   remoteHosts: RemoteHost[];
 }
 
@@ -28,6 +37,16 @@ export interface OrchestratorRunResult {
   ran: boolean;
 }
 
+const defaultDispatcherStatus: DispatcherStatus = {
+  enabled: false,
+  running: false,
+  intervalMs: 5000,
+  lastRunStartedAt: null,
+  lastRunFinishedAt: null,
+  lastRunHadTask: null,
+  lastError: null
+};
+
 export async function fetchDashboard(): Promise<DashboardData> {
   const response = await fetch("/api/dashboard");
 
@@ -35,7 +54,13 @@ export async function fetchDashboard(): Promise<DashboardData> {
     throw new Error("Failed to fetch dashboard data.");
   }
 
-  return response.json() as Promise<DashboardData>;
+  const data = (await response.json()) as DashboardData;
+
+  return {
+    ...data,
+    taskEventsByTaskId: data.taskEventsByTaskId ?? {},
+    dispatcher: data.dispatcher ?? defaultDispatcherStatus
+  };
 }
 
 export async function runOrchestratorOnce(): Promise<OrchestratorRunResult> {

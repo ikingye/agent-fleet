@@ -14,6 +14,15 @@ const emptyDashboard: DashboardData = {
   repositories: [],
   tasks: [],
   taskEventsByTaskId: {},
+  dispatcher: {
+    enabled: false,
+    running: false,
+    intervalMs: 5000,
+    lastRunStartedAt: null,
+    lastRunFinishedAt: null,
+    lastRunHadTask: null,
+    lastError: null
+  },
   remoteHosts: []
 };
 
@@ -38,6 +47,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
 
   const activeRepository = useMemo(() => dashboard.repositories[0], [dashboard.repositories]);
+  const dispatcherState = dashboard.dispatcher.running ? "running" : dashboard.dispatcher.enabled ? "idle" : "disabled";
   const hasQueuedTask = useMemo(() => dashboard.tasks.some((task) => task.state === "queued"), [dashboard.tasks]);
 
   async function refresh() {
@@ -68,10 +78,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!orchestratorRunning) {
-      return undefined;
-    }
-
     const timer = window.setInterval(() => {
       void fetchDashboard()
         .then((nextDashboard) => {
@@ -80,10 +86,10 @@ export function App() {
         .catch(() => {
           // The foreground run will surface the actionable error.
         });
-    }, 1500);
+    }, 2000);
 
     return () => window.clearInterval(timer);
-  }, [orchestratorRunning]);
+  }, []);
 
   async function submitRepository(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -301,17 +307,26 @@ export function App() {
 
         <section className="panel task-panel">
           <div className="panel-heading panel-heading-with-action">
-            <div>
-              <p className="eyebrow">Dispatch</p>
-              <h2>Task Queue</h2>
+            <div className="task-heading-copy">
+              <div>
+                <p className="eyebrow">Dispatch</p>
+                <h2>Task Queue</h2>
+              </div>
+              <div className="dispatcher-summary">
+                <span className="dispatcher-label">Auto dispatcher</span>
+                <span className={`dispatcher-state dispatcher-${dispatcherState}`}>{dispatcherState}</span>
+                {dashboard.dispatcher.lastError ? (
+                  <span className="dispatcher-error">{dashboard.dispatcher.lastError}</span>
+                ) : null}
+              </div>
             </div>
             <button
               className="secondary-button compact-button"
-              disabled={orchestratorRunning || !hasQueuedTask}
+              disabled={orchestratorRunning || dashboard.dispatcher.running || !hasQueuedTask}
               onClick={() => void runNextTask()}
               type="button"
             >
-              {orchestratorRunning ? "Running" : "Run next task"}
+              {orchestratorRunning ? "Running" : "Run once"}
             </button>
           </div>
 

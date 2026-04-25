@@ -56,13 +56,30 @@ function jsonResponse(value: unknown) {
   };
 }
 
+const dispatcher = {
+  enabled: true,
+  running: false,
+  intervalMs: 5000,
+  lastRunStartedAt: null,
+  lastRunFinishedAt: null,
+  lastRunHadTask: null,
+  lastError: null
+};
+
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ repositories: [], tasks: [], remoteHosts: [] })
+        json: () =>
+          Promise.resolve({
+            repositories: [],
+            tasks: [],
+            taskEventsByTaskId: {},
+            dispatcher,
+            remoteHosts: []
+          })
       })
     );
   });
@@ -105,6 +122,7 @@ describe("App", () => {
           repositories: [repository],
           tasks: [queuedTask],
           taskEventsByTaskId: { [queuedTask.id]: [queuedEvent] },
+          dispatcher,
           remoteHosts: []
         })
       )
@@ -112,7 +130,9 @@ describe("App", () => {
 
     render(<App />);
 
-    expect(await screen.findByRole("button", { name: "Run next task" })).toBeInTheDocument();
+    expect(await screen.findByText("Auto dispatcher")).toBeInTheDocument();
+    expect(screen.getByText("idle")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run once" })).toBeInTheDocument();
     expect(screen.getByText("Task queued")).toBeInTheDocument();
     expect(screen.getByText("user")).toBeInTheDocument();
   });
@@ -133,6 +153,7 @@ describe("App", () => {
           repositories: [repository],
           tasks: [queuedTask],
           taskEventsByTaskId: { [queuedTask.id]: [queuedEvent] },
+          dispatcher,
           remoteHosts: []
         })
       )
@@ -142,6 +163,7 @@ describe("App", () => {
           repositories: [repository],
           tasks: [plannedTask],
           taskEventsByTaskId: { [queuedTask.id]: [queuedEvent, plannedEvent] },
+          dispatcher,
           remoteHosts: []
         })
       );
@@ -150,7 +172,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Run next task" }));
+    await user.click(await screen.findByRole("button", { name: "Run once" }));
 
     expect(fetchMock).toHaveBeenCalledWith("/api/orchestrator/run-once", { method: "POST" });
     expect(await screen.findByText("Task planned")).toBeInTheDocument();

@@ -12,6 +12,8 @@ export interface CreateAppOptions {
   databasePath?: string;
   clientRoot?: string;
   commandRunner?: CommandRunner;
+  autoDispatch?: boolean;
+  dispatchIntervalMs?: number;
 }
 
 const defaultClientRoot = join(dirname(fileURLToPath(import.meta.url)), "../client");
@@ -42,8 +44,13 @@ export function createApp(options: CreateAppOptions = {}) {
   const clientRoot = options.clientRoot ?? defaultClientRoot;
   const clientIndex = join(clientRoot, "index.html");
   const routeOptions: RouteOptions = {
-    databasePath: options.databasePath ?? getStateDatabasePath()
+    databasePath: options.databasePath ?? getStateDatabasePath(),
+    autoDispatch: options.autoDispatch ?? false
   };
+
+  if (options.dispatchIntervalMs !== undefined) {
+    routeOptions.dispatchIntervalMs = options.dispatchIntervalMs;
+  }
 
   if (options.commandRunner !== undefined) {
     routeOptions.commandRunner = options.commandRunner;

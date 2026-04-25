@@ -128,6 +128,55 @@ h3 {
   gap: 12px;
 }
 
+.task-heading-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.dispatcher-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.dispatcher-label {
+  color: #60707d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dispatcher-state {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #dfe8ec;
+  color: #33414b;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.dispatcher-running {
+  background: #fff3cc;
+  color: #72510b;
+}
+
+.dispatcher-idle {
+  background: #dff3df;
+  color: #275f30;
+}
+
+.dispatcher-disabled {
+  background: #edf2f4;
+  color: #60707d;
+}
+
+.dispatcher-error {
+  color: #92331b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .empty-copy,
 .plan-copy {
   margin: 0;
