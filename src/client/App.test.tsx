@@ -1,20 +1,41 @@
 import "@testing-library/jest-dom/vitest";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
 
 describe("App", () => {
-  it("renders the Task 1 dashboard shell", () => {
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ repositories: [], tasks: [] })
+      })
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders the local fleet dashboard", async () => {
     render(<App />);
 
     expect(screen.getByRole("heading", { level: 1, name: "agent-fleet" })).toBeInTheDocument();
-    expect(screen.getByText("Local Orchestrator")).toBeInTheDocument();
-    expect(screen.getByText("MVP")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Fleet dashboard" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: "Task Queue" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Task title")).toBeInTheDocument();
+  });
+
+  it("shows an error when queueing a task without a repository", async () => {
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Queue task" }));
+
     expect(
-      screen.getByText(
-        "Task queue, agent runs, worktrees, checks, review, merge, and push status will appear here."
-      )
+      screen.getByText("Register a repository before creating tasks.")
     ).toBeInTheDocument();
   });
 });
