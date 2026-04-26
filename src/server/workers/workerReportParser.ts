@@ -2,6 +2,10 @@ import type { WorkerReport, WorkerReportStatus } from "../../shared/types.js";
 
 export type ParsedWorkerReport = Omit<WorkerReport, "id" | "goalId" | "workerSessionId" | "createdAt">;
 
+export interface WorkerFinalReportParseOptions {
+  expectedWorkerName?: string | null;
+}
+
 type SectionName =
   | "status"
   | "changedFiles"
@@ -31,7 +35,16 @@ const sectionNames = new Map<string, SectionName>([
 
 const listSections = new Set<SectionName>(["changedFiles", "verification", "decisions", "blockers", "nextActions"]);
 
-export function parseWorkerFinalReport(output: string): ParsedWorkerReport | null {
+export function parseWorkerFinalReport(
+  output: string,
+  options: WorkerFinalReportParseOptions = {}
+): ParsedWorkerReport | null {
+  const expectedWorkerName = options.expectedWorkerName?.trim();
+
+  if (expectedWorkerName === undefined || expectedWorkerName === "") {
+    return null;
+  }
+
   const lines = output.split(/\r?\n/);
   const statusIndex = lines.findIndex((line, index) => {
     const section = parseSectionLine(line);
@@ -45,7 +58,12 @@ export function parseWorkerFinalReport(output: string): ParsedWorkerReport | nul
     return null;
   }
 
-  const startIndex = findReportStart(lines, statusIndex);
+  const startIndex = findReportStart(lines, statusIndex, expectedWorkerName);
+
+  if (startIndex === null) {
+    return null;
+  }
+
   const reportLines = lines.slice(startIndex);
   const markdown = reportLines.join("\n").trimEnd();
   const report = emptyReport(markdown);
@@ -99,7 +117,7 @@ function emptyReport(markdown: string): DraftReport {
   };
 }
 
-function findReportStart(lines: string[], statusIndex: number): number {
+function findReportStart(lines: string[], statusIndex: number, expectedWorkerName: string): number | null {
   for (let index = statusIndex - 1; index >= 0; index -= 1) {
     const line = lines[index].trim();
 
@@ -107,10 +125,17 @@ function findReportStart(lines: string[], statusIndex: number): number {
       continue;
     }
 
-    return line.startsWith("#") ? index : statusIndex;
+    return isWorkerNameHeading(line, expectedWorkerName) ? index : null;
   }
 
-  return statusIndex;
+  return null;
+}
+
+function isWorkerNameHeading(line: string, expectedWorkerName: string): boolean {
+  const markdownHeading = /^(?:#{1,6}\s+)(.+?)\s*$/.exec(line);
+  const headingText = markdownHeading?.[1] ?? line;
+
+  return headingText.trim() === expectedWorkerName;
 }
 
 function parseSectionLine(line: string): { name: SectionName; value: string } | null {

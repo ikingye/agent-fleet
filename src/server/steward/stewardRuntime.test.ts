@@ -870,6 +870,7 @@ describe("StewardRuntime", () => {
   it("ingests a structured Worker final report from background completion", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
     const completion = deferred<{ status: "completed"; output: string }>();
+    let workerName: string | null = null;
 
     try {
       const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
@@ -878,6 +879,7 @@ describe("StewardRuntime", () => {
         workerAdapter: {
           kind: "codex",
           async start(input) {
+            workerName = input.prompt.match(/^Worker Name: (.+)$/m)?.[1] ?? null;
             return {
               command: "codexyoloproxy",
               cwd: input.cwd,
@@ -899,11 +901,15 @@ describe("StewardRuntime", () => {
         body: "Parse final Worker output into durable report state."
       });
 
+      if (workerName === null) {
+        throw new Error("Expected Worker prompt to include a Worker Name");
+      }
+
       completion.resolve({
         status: "completed",
         output: [
           "raw debug line that should remain in lastOutput only",
-          "# agent-fleet-ingest-worker-report-202604262151",
+          `# ${workerName}`,
           "",
           "Status: DONE_WITH_CONCERNS",
           "Changed files:",
@@ -952,6 +958,74 @@ describe("StewardRuntime", () => {
       });
       expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Owner review required.");
       expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).not.toContain("raw debug line");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not ingest a structured Worker final report when the heading does not match the Worker Name", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-background-report-mismatch",
+              pid: 4748,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet"
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Reject mismatched Worker report",
+        body: "Ignore final reports that are not headed by the assigned Worker Name."
+      });
+
+      completion.resolve({
+        status: "completed",
+        output: [
+          "# agent-fleet-different-worker-202604262151",
+          "",
+          "Status: DONE",
+          "Changed files:",
+          "- src/server/workers/workerReportParser.ts",
+          "Verification:",
+          "- npm run check passed"
+        ].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          state.goals[0].status === "completed" &&
+          state.workerSessions[0].status === "completed" &&
+          state.stewardCheckpoints.at(-1)?.reason === "recovery"
+      );
+
+      expect(dashboard.goals[0]).toMatchObject({ id: goal.id, status: "completed" });
+      expect(dashboard.workerReports ?? []).toHaveLength(0);
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        status: "completed",
+        lastOutput: expect.stringContaining("agent-fleet-different-worker-202604262151")
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "recovery",
+        summary: `Worker session ${dashboard.workerSessions[0].id} completed for goal: Reject mismatched Worker report`
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

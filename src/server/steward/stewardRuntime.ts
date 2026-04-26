@@ -155,6 +155,7 @@ export class StewardRuntime {
       completion: workerResult.completion,
       goalId: goal.id,
       goalTitle: goal.title,
+      workerName: placement.workerName,
       workerSessionId: session.id
     });
 
@@ -383,6 +384,7 @@ export class StewardRuntime {
     completion: Awaited<ReturnType<WorkerAdapter["start"]>>["completion"];
     goalId: string;
     goalTitle: string;
+    workerName: string;
     workerSessionId: string;
   }): void {
     if (input.completion === undefined) {
@@ -391,7 +393,7 @@ export class StewardRuntime {
 
     void input.completion
       .then(async (completion) => {
-        const parsedReport = parseWorkerFinalReport(completion.output);
+        const parsedReport = parseWorkerFinalReport(completion.output, { expectedWorkerName: input.workerName });
         await this.options.store.updateWorkerSessionStatus({
           workerSessionId: input.workerSessionId,
           status: completion.status,
