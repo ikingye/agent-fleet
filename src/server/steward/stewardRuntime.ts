@@ -12,6 +12,7 @@ import {
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 import { parseWorkerFinalReport } from "../workers/workerReportParser.js";
 import { buildResumeCommand } from "../workers/resumeCommand.js";
+import { buildMemoryContext, correctionMemoryKeys, type MemoryContext } from "./memoryContext.js";
 
 export interface StewardRuntimeOptions {
   store: JsonControlPlaneStore;
@@ -51,6 +52,10 @@ export class StewardRuntime {
 
   async acceptGoal(input: AcceptGoalInput): Promise<Goal> {
     const goal = await this.options.store.createGoal(input);
+    const memoryContext = buildMemoryContext({
+      goal,
+      memories: (await this.options.store.dashboard()).memories
+    });
     const repositoryPath = input.workspacePath;
     const worktreeRoot = this.options.worktreeRoot ?? join(repositoryPath, ".worktrees");
     let plannedWorktree: PlannedWorktree | null = null;
@@ -59,7 +64,12 @@ export class StewardRuntime {
       goalId: goal.id,
       workerSessionId: null,
       title: "Start Worker Agent for goal",
-      rationale: "The goal is actionable and reversible enough for the Steward Agent to begin autonomous execution.",
+      rationale: [
+        "The goal is actionable and reversible enough for the Steward Agent to begin autonomous execution.",
+        memoryContext.summary
+      ]
+        .filter((line): line is string => line !== null)
+        .join(" "),
       risk: "medium",
       confidence: 0.72,
       reversible: true,
@@ -68,6 +78,7 @@ export class StewardRuntime {
       actions: [
         "Create an auditable Steward decision",
         `Worker Name: ${placement.workerName}`,
+        ...buildMemoryActions(memoryContext),
         ...buildPlacementActions(placement),
         ...(placement.hostId === null ? [] : ["Provision remote scratch workspace before Worker launch"]),
         "Start a Worker Agent session",
@@ -125,7 +136,7 @@ export class StewardRuntime {
     const workerResult = await placement.adapter.start({
       goalTitle: goal.title,
       cwd: workerCwd,
-      prompt: this.buildWorkerPrompt(placement.workerName, goal.title, goal.body)
+      prompt: this.buildWorkerPrompt(placement.workerName, goal.title, goal.body, memoryContext)
     });
     const session = await this.options.store.createWorkerSession({
       goalId: goal.id,
@@ -181,7 +192,8 @@ export class StewardRuntime {
         workerResult.resumeId,
         workerResult.status,
         workerResult.initialOutput,
-        provisionResult
+        provisionResult,
+        memoryContext
       ),
       goalIds: [goal.id],
       workerSessionIds: [session.id]
@@ -309,13 +321,15 @@ export class StewardRuntime {
       createdBy: "human"
     });
 
-    await this.options.store.upsertMemory({
-      scope: "user",
-      projectName: null,
-      key: "correction:terminology",
-      value: input.body,
-      sourceCorrectionId: correction.id
-    });
+    for (const key of correctionMemoryKeys(input.body)) {
+      await this.options.store.upsertMemory({
+        scope: "user",
+        projectName: null,
+        key,
+        value: input.body,
+        sourceCorrectionId: correction.id
+      });
+    }
 
     const dashboard = await this.options.store.dashboard();
     const correctedDecision = dashboard.decisions.find((decision) => decision.id === input.decisionId);
@@ -345,7 +359,7 @@ export class StewardRuntime {
     return correction;
   }
 
-  private buildWorkerPrompt(workerName: string, title: string, body: string): string {
+  private buildWorkerPrompt(workerName: string, title: string, body: string, memoryContext: MemoryContext): string {
     return [
       `Worker Name: ${workerName}`,
       "",
@@ -353,6 +367,8 @@ export class StewardRuntime {
       "Treat Steward instructions as the human owner's instructions.",
       "Use the exact Worker Name as the heading of your final report.",
       "",
+      ...memoryContext.promptLines,
+      ...(memoryContext.promptLines.length === 0 ? [] : [""]),
       `Goal: ${title}`,
       "",
       body,
@@ -444,6 +460,18 @@ function buildPlacementActions(placement: WorkerPlacement): string[] {
   return ["Use local Worker adapter; goal does not require remote offload."];
 }
 
+function buildMemoryActions(memoryContext: MemoryContext): string[] {
+  if (memoryContext.entries.length === 0) {
+    return [];
+  }
+
+  return [
+    `Apply ${memoryContext.entries.length} relevant owner ${
+      memoryContext.entries.length === 1 ? "memory" : "memories"
+    } to Worker instructions`
+  ];
+}
+
 function buildWorkerName(goal: Goal, remote: boolean): string {
   const timestamp = formatWorkerTimestamp(new Date());
   const remoteMarker = remote ? "-remote" : "";
@@ -510,16 +538,20 @@ function buildDispatchNextAction(
   resumeId: string | null,
   status: "running" | "completed" | "failed",
   initialOutput: string,
-  provisionResult: RemoteWorkspaceProvisionResult | null
+  provisionResult: RemoteWorkspaceProvisionResult | null,
+  memoryContext: MemoryContext
 ): string {
   if (status === "failed") {
     const output = summarizeWorkerOutput(initialOutput);
 
     if (output === "") {
-      return `Review failed Worker session ${workerSessionId} (${workerName}); ${command} did not start.`;
+      return appendMemorySummary(
+        `Review failed Worker session ${workerSessionId} (${workerName}); ${command} did not start.`,
+        memoryContext
+      );
     }
 
-    return `Review failed Worker session ${workerSessionId} (${workerName}); ${output}`;
+    return appendMemorySummary(`Review failed Worker session ${workerSessionId} (${workerName}); ${output}`, memoryContext);
   }
 
   const resumeCommand = buildResumeCommand({
@@ -530,15 +562,31 @@ function buildDispatchNextAction(
 
   if (resumeCommand === null) {
     return appendProvisionSummary(
-      `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted. Worker Name: ${workerName}.`,
+      appendMemorySummary(
+        `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted. Worker Name: ${workerName}.`,
+        memoryContext
+      ),
       provisionResult
     );
   }
 
   return appendProvisionSummary(
-    `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted. Worker Name: ${workerName}.`,
+    appendMemorySummary(
+      `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted. Worker Name: ${workerName}.`,
+      memoryContext
+    ),
     provisionResult
   );
+}
+
+function appendMemorySummary(nextAction: string, memoryContext: MemoryContext): string {
+  if (memoryContext.entries.length === 0) {
+    return nextAction;
+  }
+
+  return `${nextAction} Memory applied: ${memoryContext.entries.length} relevant owner ${
+    memoryContext.entries.length === 1 ? "preference" : "preferences"
+  }.`;
 }
 
 function appendProvisionSummary(nextAction: string, provisionResult: RemoteWorkspaceProvisionResult | null): string {

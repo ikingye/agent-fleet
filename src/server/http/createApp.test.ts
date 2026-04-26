@@ -488,7 +488,8 @@ describe("API routes", () => {
         body: "Escalate irreversible merge decisions to me."
       });
       expect(updated.memories[0]).toMatchObject({
-        key: "correction:terminology"
+        key: "preference:decision-review:high-impact",
+        value: "Escalate irreversible merge decisions to me."
       });
     } finally {
       await app.close();
