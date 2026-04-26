@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import fastify from "fastify";
 import { join } from "node:path";
 import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
+import { runRemoteNodeOnboarding } from "../remote/remoteNodeOnboarding.js";
 import { probeRemoteExecutionNode, type RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import {
@@ -461,6 +462,37 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     try {
       return await probeRemoteExecutionNode({
+        node,
+        codexCommand: workerCommand,
+        runner: options.remoteCommandRunner
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/execution-nodes/:id/onboarding", async (request, reply) => {
+    const params = request.params as { id?: string };
+    const nodeId = requireString(params.id, "id");
+    const dashboard = await store.dashboard();
+    const node = dashboard.executionNodes.find((item) => item.id === nodeId);
+
+    if (node === undefined) {
+      return reply.code(404).send({
+        error: "Not Found",
+        message: `Execution node not found: ${nodeId}`
+      });
+    }
+
+    try {
+      return await runRemoteNodeOnboarding({
         node,
         codexCommand: workerCommand,
         runner: options.remoteCommandRunner
