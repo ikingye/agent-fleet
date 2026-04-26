@@ -1140,6 +1140,50 @@ describe("API routes", () => {
     }
   });
 
+  it("defaults and normalizes stateless remote execution node work roots", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const defaultedResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-231",
+          kind: "remote",
+          status: "unknown",
+          sshHost: "worker@aicp-hhht-231",
+          proxyUrl: null
+        }
+      });
+      const normalizedResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-232",
+          kind: "remote",
+          status: "unknown",
+          sshHost: "worker@aicp-hhht-232",
+          workRoot: "/tmp/agent-fleet/work/",
+          proxyUrl: null
+        }
+      });
+
+      expect(defaultedResponse.statusCode).toBe(200);
+      expect(normalizedResponse.statusCode).toBe(200);
+      expect(defaultedResponse.json()).toMatchObject({
+        workRoot: "/tmp/agent-fleet/work"
+      });
+      expect(normalizedResponse.json()).toMatchObject({
+        workRoot: "/tmp/agent-fleet/work"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("probes remote execution node readiness through a lightweight ssh command", async () => {
     const remoteRunner = new CapturingRemoteCommandRunner({
       exitCode: 0,
