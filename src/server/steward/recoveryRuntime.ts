@@ -4,6 +4,7 @@ import type {
   StewardCheckpoint,
   StewardMessage,
   StewardRecoveryReport,
+  WorkerReport,
   WorkerSessionStatus
 } from "../../shared/types.js";
 import { buildResumeCommand } from "../workers/resumeCommand.js";
@@ -48,6 +49,7 @@ export function buildStewardRecoveryReport(
       };
     });
   const recentStewardMessages = latestStewardMessages(dashboard.stewardMessages ?? [], 2);
+  const recentWorkerReports = latestWorkerReports(dashboard.workerReports ?? [], 3);
 
   return {
     generatedAt,
@@ -55,8 +57,9 @@ export function buildStewardRecoveryReport(
     activeGoalIds,
     activeGoals,
     activeWorkerSessions,
+    recentWorkerReports,
     recentStewardMessages,
-    nextActions: buildNextActions(lastCheckpoint, activeWorkerSessions, recentStewardMessages)
+    nextActions: buildNextActions(lastCheckpoint, activeWorkerSessions, recentStewardMessages, recentWorkerReports)
   };
 }
 
@@ -75,7 +78,8 @@ function latestCheckpoint(checkpoints: StewardCheckpoint[]): StewardCheckpoint |
 function buildNextActions(
   lastCheckpoint: StewardCheckpoint | null,
   activeWorkerSessions: RecoveryWorkerSession[],
-  recentStewardMessages: StewardMessage[]
+  recentStewardMessages: StewardMessage[],
+  recentWorkerReports: WorkerReport[]
 ): string[] {
   const actions: string[] = [];
 
@@ -101,6 +105,17 @@ function buildNextActions(
     );
   }
 
+  for (const report of recentWorkerReports) {
+    if (report.status !== "BLOCKED" && !report.needsOwnerReview && report.nextActions.length === 0) {
+      continue;
+    }
+
+    const nextAction =
+      report.nextActions[0] ?? report.blockers[0] ?? "Review the structured Worker report before dispatching more work.";
+    const ownerReview = report.needsOwnerReview ? " Owner review required." : "";
+    actions.push(`Worker report ${report.id} (${report.status}): ${nextAction}${ownerReview}`);
+  }
+
   if (activeWorkerSessions.length === 0) {
     actions.push(
       "No active Worker sessions. Review queued, running, or blocked goals and decide whether to dispatch a new Worker Agent."
@@ -118,6 +133,12 @@ function buildNextActions(
 
 function latestStewardMessages(messages: StewardMessage[], limit: number): StewardMessage[] {
   return [...messages]
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+    .slice(-limit);
+}
+
+function latestWorkerReports(reports: WorkerReport[], limit: number): WorkerReport[] {
+  return [...reports]
     .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
     .slice(-limit);
 }

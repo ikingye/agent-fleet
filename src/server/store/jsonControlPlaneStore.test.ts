@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { JsonControlPlaneStore } from "./jsonControlPlaneStore.js";
 
 describe("JsonControlPlaneStore", () => {
-  it("persists goals, Steward decisions, Worker sessions, worktree assignments, corrections, and memory", async () => {
+  it("persists goals, Steward decisions, Worker sessions, reports, worktree assignments, corrections, and memory", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
     const statePath = join(dir, "state.json");
 
@@ -40,6 +40,19 @@ describe("JsonControlPlaneStore", () => {
         resumeId: "resume-123",
         status: "running"
       });
+      const workerReport = await store.recordWorkerReport({
+        goalId: goal.id,
+        workerSessionId: worker.id,
+        status: "DONE_WITH_CONCERNS",
+        changedFiles: ["src/server/workers/workerReportParser.ts"],
+        verification: ["npm run check"],
+        decisions: ["Persist parsed Worker reports in dashboard state."],
+        blockers: ["Owner needs to decide whether to merge."],
+        nextActions: ["Review report and merge if acceptable."],
+        needsOwnerReview: true,
+        resumeId: "resume-worker-report",
+        markdown: "Status: DONE_WITH_CONCERNS"
+      });
       const assignment = await store.createWorktreeAssignment({
         workerSessionId: worker.id,
         repositoryPath: "/repo/agent-fleet",
@@ -61,6 +74,7 @@ describe("JsonControlPlaneStore", () => {
 
       const reopened = await JsonControlPlaneStore.open(statePath);
       const dashboard = await reopened.dashboard();
+      const workerReports = dashboard.workerReports ?? [];
       const rawState = JSON.parse(await readFile(statePath, "utf8")) as { version: number };
 
       expect(rawState.version).toBe(1);
@@ -83,6 +97,20 @@ describe("JsonControlPlaneStore", () => {
         resumeId: "resume-123",
         status: "running"
       });
+      expect(workerReports[0]).toMatchObject({
+        id: workerReport.id,
+        goalId: goal.id,
+        workerSessionId: worker.id,
+        status: "DONE_WITH_CONCERNS",
+        changedFiles: ["src/server/workers/workerReportParser.ts"],
+        verification: ["npm run check"],
+        decisions: ["Persist parsed Worker reports in dashboard state."],
+        blockers: ["Owner needs to decide whether to merge."],
+        nextActions: ["Review report and merge if acceptable."],
+        needsOwnerReview: true,
+        resumeId: "resume-worker-report",
+        markdown: "Status: DONE_WITH_CONCERNS"
+      });
       expect(dashboard.worktreeAssignments[0]).toMatchObject({
         id: assignment.id,
         workerSessionId: worker.id,
@@ -99,6 +127,7 @@ describe("JsonControlPlaneStore", () => {
         key: "agent_vocabulary",
         value: "Use Steward Agent and Worker Agent."
       });
+      expect(dashboard.events.map((event) => event.type)).toContain("worker.report.recorded");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

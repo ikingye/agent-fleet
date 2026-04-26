@@ -10,6 +10,7 @@ export type ArtifactKind = "research" | "plan" | "worker_output" | "review" | "d
 export type ReviewStatus = "passed" | "failed" | "needs_attention";
 export type DeliveryStatus = "delivered" | "failed";
 export type StewardMessageRole = "owner" | "steward" | "worker" | "system";
+export type WorkerReportStatus = "DONE" | "DONE_WITH_CONCERNS" | "BLOCKED";
 
 export interface Goal {
   id: string;
@@ -51,6 +52,22 @@ export interface WorkerSession {
   lastOutput: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WorkerReport {
+  id: string;
+  goalId: string;
+  workerSessionId: string;
+  status: WorkerReportStatus;
+  changedFiles: string[];
+  verification: string[];
+  decisions: string[];
+  blockers: string[];
+  nextActions: string[];
+  needsOwnerReview: boolean;
+  resumeId: string | null;
+  markdown: string;
+  createdAt: string;
 }
 
 export interface DecisionCorrection {
@@ -189,6 +206,7 @@ export interface StewardRecoveryReport {
   activeGoalIds: string[];
   activeGoals: Goal[];
   activeWorkerSessions: RecoveryWorkerSession[];
+  recentWorkerReports: WorkerReport[];
   recentStewardMessages: StewardMessage[];
   nextActions: string[];
 }
@@ -202,6 +220,7 @@ export interface DashboardData {
   executionNodes: ExecutionNode[];
   worktreeAssignments: WorktreeAssignment[];
   stewardCheckpoints: StewardCheckpoint[];
+  workerReports?: WorkerReport[];
   stewardMessages?: StewardMessage[];
   agentArtifacts: AgentArtifact[];
   reviews: ReviewResult[];
