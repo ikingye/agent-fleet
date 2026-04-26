@@ -1,5 +1,6 @@
-import { join } from "node:path";
-import type { Goal, DecisionCorrection } from "../../shared/types.js";
+import { join, posix } from "node:path";
+import type { Goal, DecisionCorrection, ExecutionNode } from "../../shared/types.js";
+import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import {
   materializeWorktree,
@@ -13,10 +14,18 @@ import { buildResumeCommand } from "../workers/resumeCommand.js";
 export interface StewardRuntimeOptions {
   store: JsonControlPlaneStore;
   workerAdapter: WorkerAdapter;
+  remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
   defaultWorkerCwd: string;
   defaultRepositoryPath?: string;
   worktreeRoot?: string;
   worktreeRunner?: MaterializeWorktreeRunner;
+}
+
+interface WorkerPlacement {
+  adapter: WorkerAdapter;
+  hostId: string | null;
+  cwd: string;
+  worktreePath: string;
 }
 
 export interface AcceptGoalInput {
@@ -55,9 +64,10 @@ export class StewardRuntime {
     const repositoryPath = input.workspacePath;
     const worktreeRoot = this.options.worktreeRoot ?? join(repositoryPath, ".worktrees");
     let plannedWorktree: PlannedWorktree | null = null;
-    let workerCwd = input.workspacePath;
+    const placement = await this.selectWorkerPlacement(goal, input.workspacePath);
+    let workerCwd = placement.cwd;
 
-    if (this.options.worktreeRunner !== undefined) {
+    if (placement.hostId === null && this.options.worktreeRunner !== undefined) {
       plannedWorktree = planWorktree({
         projectName: goal.projectName,
         repositoryPath,
@@ -69,7 +79,7 @@ export class StewardRuntime {
       workerCwd = plannedWorktree.path;
     }
 
-    const workerResult = await this.options.workerAdapter.start({
+    const workerResult = await placement.adapter.start({
       goalTitle: goal.title,
       cwd: workerCwd,
       prompt: this.buildWorkerPrompt(goal.title, goal.body)
@@ -77,11 +87,11 @@ export class StewardRuntime {
     const session = await this.options.store.createWorkerSession({
       goalId: goal.id,
       decisionId: decision.id,
-      kind: this.options.workerAdapter.kind,
+      kind: placement.adapter.kind,
       command: workerResult.command,
       cwd: workerResult.cwd,
       pid: workerResult.pid,
-      hostId: null,
+      hostId: placement.hostId,
       resumeId: workerResult.resumeId,
       status: workerResult.status,
       lastOutput: workerResult.initialOutput
@@ -93,18 +103,25 @@ export class StewardRuntime {
       workerSessionId: session.id
     });
 
-    plannedWorktree ??= planWorktree({
-      projectName: goal.projectName,
-      repositoryPath,
-      worktreeRoot,
-      goalTitle: goal.title,
-      workerSessionId: session.id
-    });
+    const worktreeAssignment =
+      plannedWorktree ??
+      (placement.hostId === null
+        ? planWorktree({
+            projectName: goal.projectName,
+            repositoryPath,
+            worktreeRoot,
+            goalTitle: goal.title,
+            workerSessionId: session.id
+          })
+        : {
+            path: placement.worktreePath,
+            branchName: `remote/${session.id}-${slugify(goal.title)}`
+          });
     await this.options.store.createWorktreeAssignment({
       workerSessionId: session.id,
       repositoryPath,
-      worktreePath: plannedWorktree.path,
-      branchName: plannedWorktree.branchName
+      worktreePath: worktreeAssignment.path,
+      branchName: worktreeAssignment.branchName
     });
 
     await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
@@ -126,6 +143,86 @@ export class StewardRuntime {
     });
 
     return updatedGoal;
+  }
+
+  private async selectWorkerPlacement(goal: Goal, workspacePath: string): Promise<WorkerPlacement> {
+    const remoteNode = await this.selectReadyRemoteNode(goal);
+
+    if (remoteNode !== null && this.options.remoteWorkerAdapterFactory !== undefined) {
+      const remoteWorkspacePath = buildRemoteWorkspacePath(remoteNode, goal.projectName, workspacePath);
+
+      return {
+        adapter: this.options.remoteWorkerAdapterFactory(remoteNode),
+        hostId: remoteNode.id,
+        cwd: remoteWorkspacePath,
+        worktreePath: remoteWorkspacePath
+      };
+    }
+
+    return {
+      adapter: this.options.workerAdapter,
+      hostId: null,
+      cwd: workspacePath,
+      worktreePath: workspacePath
+    };
+  }
+
+  private async selectReadyRemoteNode(goal: Goal): Promise<ExecutionNode | null> {
+    const dashboard = await this.options.store.dashboard();
+    const requiredTags = detectGoalResourceTags(goal);
+    const runningByHostId = new Map<string, number>();
+
+    for (const session of dashboard.workerSessions) {
+      if (session.hostId === null || (session.status !== "starting" && session.status !== "running")) {
+        continue;
+      }
+
+      runningByHostId.set(session.hostId, (runningByHostId.get(session.hostId) ?? 0) + 1);
+    }
+
+    const candidates = dashboard.executionNodes
+      .map((node, index) => ({ node, index }))
+      .filter(({ node }) => {
+        if (node.kind !== "remote") {
+          return false;
+        }
+
+        return evaluateRemoteNodeReadiness({
+          status: node.status,
+          sshHost: node.sshHost,
+          workRoot: node.workRoot,
+          proxyUrl: node.proxyUrl,
+          proxyRequired: false
+        }).ready;
+      })
+      .map(({ node, index }) => {
+        const capacity = Math.max(1, Math.floor(node.capacity));
+        const running = runningByHostId.get(node.id) ?? 0;
+        const availableSlots = capacity - running;
+        const tagSet = new Set(node.tags.map((tag) => tag.toLowerCase()));
+        const matchedRequiredTags = requiredTags.filter((tag) => tagSet.has(tag)).length;
+
+        return { node, index, availableSlots, matchedRequiredTags };
+      })
+      .filter((candidate) => candidate.availableSlots > 0);
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    candidates.sort((left, right) => {
+      const leftMatchesAll = left.matchedRequiredTags === requiredTags.length ? 1 : 0;
+      const rightMatchesAll = right.matchedRequiredTags === requiredTags.length ? 1 : 0;
+
+      return (
+        rightMatchesAll - leftMatchesAll ||
+        right.matchedRequiredTags - left.matchedRequiredTags ||
+        right.availableSlots - left.availableSlots ||
+        left.index - right.index
+      );
+    });
+
+    return candidates[0].node;
   }
 
   async correctDecision(input: CorrectDecisionInput): Promise<DecisionCorrection> {
@@ -214,6 +311,45 @@ export class StewardRuntime {
         console.error("Worker completion handler failed", error);
       });
   }
+}
+
+function buildRemoteWorkspacePath(node: ExecutionNode, projectName: string, workspacePath: string): string {
+  return posix.join(node.workRoot, slugify(projectName), slugify(workspaceName(workspacePath)));
+}
+
+function detectGoalResourceTags(goal: Goal): string[] {
+  const text = `${goal.title}\n${goal.body}`.toLowerCase();
+  const tags = new Set<string>();
+
+  if (/(gpu|cuda|训练|模型|推理|渲染)/i.test(text)) {
+    tags.add("gpu");
+  }
+
+  if (/(heavy|高负载|并行|build|test)/i.test(text)) {
+    tags.add("high-cpu");
+  }
+
+  return [...tags];
+}
+
+function workspaceName(workspacePath: string): string {
+  const normalized = workspacePath.replaceAll("\\", "/").replace(/\/+$/g, "");
+  const segments = normalized.split("/").filter((segment) => segment.trim() !== "");
+
+  return segments.at(-1) ?? "workspace";
+}
+
+function slugify(value: string): string {
+  const slug = value
+    .normalize("NFKD")
+    .replace(/[^\w\s-]/g, " ")
+    .replace(/_/g, "-")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return slug === "" ? "workspace" : slug;
 }
 
 function goalStatusForWorkerStatus(status: "running" | "completed" | "failed") {

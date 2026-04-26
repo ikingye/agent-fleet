@@ -81,6 +81,8 @@ const dashboard = {
       sshHost: "worker@remote-build-1.internal",
       workRoot: "/srv/agent-fleet/worktrees",
       proxyUrl: "https://proxy.agent-fleet.internal",
+      tags: ["remote", "linux", "high-cpu"],
+      capacity: 2,
       createdAt: "2026-04-26T00:00:00.000Z",
       updatedAt: "2026-04-26T00:00:00.000Z"
     }
@@ -175,6 +177,8 @@ describe("App", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
     expect(screen.getByText("worker@remote-build-1.internal")).toBeInTheDocument();
     expect(screen.getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
+    expect(screen.getByText("remote, linux, high-cpu")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
   });
 
   it("registers a remote execution node and refreshes the dashboard", async () => {
@@ -190,6 +194,8 @@ describe("App", () => {
           sshHost: "worker@mac-mini.local",
           workRoot: "/Users/worker/agent-fleet",
           proxyUrl: "http://127.0.0.1:1080",
+          tags: ["remote", "linux", "high-cpu"],
+          capacity: 3,
           createdAt: "2026-04-26T00:03:00.000Z",
           updatedAt: "2026-04-26T00:03:00.000Z"
         }
@@ -209,6 +215,9 @@ describe("App", () => {
     await user.type(screen.getByLabelText("SSH host"), "worker@mac-mini.local");
     await user.type(screen.getByLabelText("Work root"), "/Users/worker/agent-fleet");
     await user.type(screen.getByLabelText("Proxy URL"), "http://127.0.0.1:1080");
+    await user.type(screen.getByLabelText("Tags"), "remote, linux, high-cpu");
+    await user.clear(screen.getByLabelText("Capacity"));
+    await user.type(screen.getByLabelText("Capacity"), "3");
     await user.selectOptions(screen.getByLabelText("Remote node status"), "ready");
     await user.click(screen.getByRole("button", { name: "Register node" }));
 
@@ -222,7 +231,9 @@ describe("App", () => {
           status: "ready",
           sshHost: "worker@mac-mini.local",
           workRoot: "/Users/worker/agent-fleet",
-          proxyUrl: "http://127.0.0.1:1080"
+          proxyUrl: "http://127.0.0.1:1080",
+          tags: ["remote", "linux", "high-cpu"],
+          capacity: 3
         })
       })
     );

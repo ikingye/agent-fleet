@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./createApp.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
+import type { SshWorkerProcessInput, SshWorkerProcessResult, SshWorkerProcessRunner } from "../workers/sshWorkerAdapter.js";
 
 const fakeWorkerAdapter: WorkerAdapter = {
   kind: "codex",
@@ -18,6 +19,17 @@ const fakeWorkerAdapter: WorkerAdapter = {
     };
   }
 };
+
+class CapturingSshRunner implements SshWorkerProcessRunner {
+  readonly inputs: SshWorkerProcessInput[] = [];
+
+  constructor(private readonly result: SshWorkerProcessResult) {}
+
+  async run(input: SshWorkerProcessInput): Promise<SshWorkerProcessResult> {
+    this.inputs.push(input);
+    return this.result;
+  }
+}
 
 describe("API routes", () => {
   let dir: string;
@@ -684,7 +696,9 @@ describe("API routes", () => {
           status: "unknown",
           sshHost: "worker@mac-mini.local",
           workRoot: "/Users/worker/agent-fleet",
-          proxyUrl: "http://127.0.0.1:1080"
+          proxyUrl: "http://127.0.0.1:1080",
+          tags: ["remote", "linux", "high-cpu"],
+          capacity: 3
         }
       });
 
@@ -695,7 +709,9 @@ describe("API routes", () => {
         status: "unknown",
         sshHost: "worker@mac-mini.local",
         workRoot: "/Users/worker/agent-fleet",
-        proxyUrl: "http://127.0.0.1:1080"
+        proxyUrl: "http://127.0.0.1:1080",
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 3
       });
 
       const dashboardResponse = await app.inject({ method: "GET", url: "/api/dashboard" });
@@ -704,7 +720,9 @@ describe("API routes", () => {
       expect(dashboard.executionNodes).toHaveLength(1);
       expect(dashboard.executionNodes[0]).toMatchObject({
         name: "mac-mini-builder",
-        kind: "remote"
+        kind: "remote",
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 3
       });
       expect(dashboard.events.map((event: { type: string }) => event.type)).toContain("execution_node.registered");
     } finally {
@@ -761,6 +779,73 @@ describe("API routes", () => {
         "execution_node.registered",
         "execution_node.updated"
       ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("dispatches accepted goals to a ready remote execution node through SSH", async () => {
+    const sshRunner = new CapturingSshRunner({
+      status: "completed",
+      output: "accepted remote goal\nresume id: remote-api-test\n",
+      pid: 8686
+    });
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "fake-remote-worker",
+      workerArgs: ["--safe-smoke"],
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      remoteSshWorkerRunner: sshRunner
+    });
+
+    try {
+      const nodeResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-231",
+          kind: "remote",
+          status: "ready",
+          sshHost: "aicp-hhht-231",
+          workRoot: "/root/agent-fleet-workspaces",
+          proxyUrl: "http://127.0.0.1:1080"
+        }
+      });
+      const node = nodeResponse.json();
+
+      const goalResponse = await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Remote dispatch",
+          body: "Use a safe fake Worker command."
+        }
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(nodeResponse.statusCode).toBe(200);
+      expect(goalResponse.statusCode).toBe(200);
+      expect(sshRunner.inputs).toHaveLength(1);
+      expect(sshRunner.inputs[0]).toMatchObject({
+        command: "ssh",
+        stdin: expect.stringContaining("Goal: Remote dispatch")
+      });
+      expect(sshRunner.inputs[0].args.slice(0, -1)).toEqual(["aicp-hhht-231"]);
+      expect(sshRunner.inputs[0].args.at(-1)).toContain(
+        "cd '\\''/root/agent-fleet-workspaces/agent-fleet/agent-fleet'\\''"
+      );
+      expect(sshRunner.inputs[0].args.at(-1)).toContain("HTTPS_PROXY='\\''http://127.0.0.1:1080'\\''");
+      expect(sshRunner.inputs[0].args.at(-1)).toContain("'\\''fake-remote-worker'\\''");
+      expect(sshRunner.inputs[0].args.at(-1)).toContain("'\\''--safe-smoke'\\''");
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: node.id,
+        command: "ssh aicp-hhht-231 fake-remote-worker --safe-smoke",
+        cwd: "/root/agent-fleet-workspaces/agent-fleet/agent-fleet",
+        resumeId: "remote-api-test",
+        status: "completed"
+      });
     } finally {
       await app.close();
     }

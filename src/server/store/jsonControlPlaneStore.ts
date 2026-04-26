@@ -103,7 +103,8 @@ export interface UpsertMemoryInput {
   sourceCorrectionId: string | null;
 }
 
-export type UpsertExecutionNodeInput = Omit<ExecutionNode, "id" | "createdAt" | "updatedAt">;
+export type UpsertExecutionNodeInput = Omit<ExecutionNode, "id" | "createdAt" | "updatedAt" | "tags" | "capacity"> &
+  Partial<Pick<ExecutionNode, "tags" | "capacity">>;
 
 export interface RecordAgentArtifactInput {
   goalId: string;
@@ -179,7 +180,7 @@ function parseState(raw: string): ControlPlaneState {
     workerSessions: parsed.workerSessions ?? [],
     corrections: parsed.corrections ?? [],
     memories: parsed.memories ?? [],
-    executionNodes: parsed.executionNodes ?? [],
+    executionNodes: (parsed.executionNodes ?? []).map(normalizeExecutionNode),
     worktreeAssignments: parsed.worktreeAssignments ?? [],
     stewardCheckpoints: parsed.stewardCheckpoints ?? [],
     stewardMessages: parsed.stewardMessages ?? [],
@@ -198,6 +199,39 @@ function normalizeGoal(goal: Goal | (Omit<Goal, "workspacePath"> & { workspacePa
         ? goal.workspacePath
         : legacyWorkspacePath(goal.projectName)
   };
+}
+
+function normalizeExecutionNode(
+  node: ExecutionNode | (Omit<ExecutionNode, "tags" | "capacity"> & Partial<Pick<ExecutionNode, "tags" | "capacity">>)
+): ExecutionNode {
+  return {
+    ...node,
+    tags: normalizeTags(node.tags),
+    capacity: normalizeCapacity(node.capacity)
+  };
+}
+
+function normalizeTags(tags: unknown): string[] {
+  if (!Array.isArray(tags)) {
+    return [];
+  }
+
+  return [
+    ...new Set(
+      tags
+        .filter((tag): tag is string => typeof tag === "string")
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag) => tag !== "")
+    )
+  ];
+}
+
+function normalizeCapacity(capacity: unknown): number {
+  if (typeof capacity !== "number" || !Number.isFinite(capacity)) {
+    return 1;
+  }
+
+  return Math.max(1, Math.floor(capacity));
 }
 
 function legacyWorkspacePath(projectName: string): string {
@@ -614,6 +648,8 @@ export class JsonControlPlaneStore {
       existing.sshHost = input.sshHost;
       existing.workRoot = input.workRoot;
       existing.proxyUrl = input.proxyUrl;
+      existing.tags = normalizeTags(input.tags);
+      existing.capacity = normalizeCapacity(input.capacity);
       existing.updatedAt = now();
       this.addEvent({
         type: "execution_node.updated",
@@ -628,7 +664,9 @@ export class JsonControlPlaneStore {
           status: existing.status,
           sshHost: existing.sshHost,
           workRoot: existing.workRoot,
-          proxyUrl: existing.proxyUrl
+          proxyUrl: existing.proxyUrl,
+          tags: existing.tags,
+          capacity: existing.capacity
         }
       });
       await this.save();
@@ -639,6 +677,8 @@ export class JsonControlPlaneStore {
     const node: ExecutionNode = {
       id: randomUUID(),
       ...input,
+      tags: normalizeTags(input.tags),
+      capacity: normalizeCapacity(input.capacity),
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -657,7 +697,9 @@ export class JsonControlPlaneStore {
         status: node.status,
         sshHost: node.sshHost,
         workRoot: node.workRoot,
-        proxyUrl: node.proxyUrl
+        proxyUrl: node.proxyUrl,
+        tags: node.tags,
+        capacity: node.capacity
       }
     });
     await this.save();

@@ -203,7 +203,9 @@ describe("JsonControlPlaneStore", () => {
         status: "unknown",
         sshHost: "worker@mac-mini.local",
         workRoot: "/Users/worker/agent-fleet",
-        proxyUrl: null
+        proxyUrl: null,
+        tags: ["remote", "linux"],
+        capacity: 1
       });
       const updated = await store.upsertExecutionNode({
         name: "mac-mini-builder",
@@ -211,7 +213,9 @@ describe("JsonControlPlaneStore", () => {
         status: "ready",
         sshHost: "worker@mac-mini.local",
         workRoot: "/Users/worker/agent-fleet-updated",
-        proxyUrl: "http://127.0.0.1:1080"
+        proxyUrl: "http://127.0.0.1:1080",
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 4
       });
 
       const dashboard = await store.dashboard();
@@ -226,12 +230,57 @@ describe("JsonControlPlaneStore", () => {
         status: "ready",
         sshHost: "worker@mac-mini.local",
         workRoot: "/Users/worker/agent-fleet-updated",
-        proxyUrl: "http://127.0.0.1:1080"
+        proxyUrl: "http://127.0.0.1:1080",
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 4
       });
       expect(dashboard.events.map((event) => event.type)).toEqual([
         "execution_node.registered",
         "execution_node.updated"
       ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parses legacy execution nodes without tags or capacity using defaults", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      await writeFile(
+        statePath,
+        JSON.stringify(
+          {
+            version: 1,
+            executionNodes: [
+              {
+                id: "legacy-node",
+                name: "legacy-remote",
+                kind: "remote",
+                status: "ready",
+                sshHost: "worker@legacy.internal",
+                workRoot: "/srv/legacy",
+                proxyUrl: null,
+                createdAt: "2026-04-26T00:00:00.000Z",
+                updatedAt: "2026-04-26T00:00:00.000Z"
+              }
+            ]
+          },
+          null,
+          2
+        )
+      );
+
+      const store = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await store.dashboard();
+
+      expect(dashboard.executionNodes[0]).toMatchObject({
+        id: "legacy-node",
+        name: "legacy-remote",
+        tags: [],
+        capacity: 1
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

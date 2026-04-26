@@ -1,10 +1,11 @@
 # macOS Remote Offload
 
-Remote execution is a planned capability. The goal is to keep the local Mac responsive while Worker Agents, builds, tests, and browser automation run on remote Linux machines.
+Remote execution keeps the local Mac responsive while Worker Agents, builds, tests, and browser automation run on a pool of remote Linux machines.
 
 ## Target Behavior
 
-- The Steward Agent chooses local or remote execution based on project policy, machine load, and task needs.
+- The Steward Agent treats remote servers as stateless compute resources, not project owners or durable sources of truth.
+- The Steward Agent prefers a registered ready remote execution node for high-load work and falls back to local execution when no remote node can take the task.
 - Worker sessions record host, target workspace cwd, worktree, command, pid, resume id, status, and logs.
 - The browser control plane remains local, compact, and management-only.
 - Interrupted remote sessions can be resumed without reconstructing terminal state by hand.
@@ -23,7 +24,19 @@ The remote command is a minimal `sh -lc` wrapper that changes to the requested r
 cd '<remote target workspace>' && exec env HTTPS_PROXY='<proxy url>' codex exec --json --sandbox workspace-write -
 ```
 
-Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata; business project code and UI still belong in the target workspace, not in the agent-fleet dashboard.
+Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata; business project code and UI still belong in the target workspace, not in the agent-fleet dashboard. Remote workspaces are disposable scratch space. The source of truth stays in git and the local control-plane state; remote files must not be treated as durable project state.
+
+When a ready remote node is selected, the Steward maps the target workspace to a deterministic remote cwd:
+
+```text
+<execution node workRoot>/<project slug>/<workspace slug>
+```
+
+For example, project `agent-fleet` with target workspace `~/code/project/agent-fleet` on a node whose `workRoot` is `/root/agent-fleet-workspaces` runs at:
+
+```text
+/root/agent-fleet-workspaces/agent-fleet/agent-fleet
+```
 
 Behavior:
 
@@ -74,9 +87,41 @@ curl -X POST http://127.0.0.1:8787/api/execution-nodes \
     "kind": "remote",
     "status": "unknown",
     "sshHost": "worker@mac-mini.local",
-    "workRoot": "/Users/worker/agent-fleet",
-    "proxyUrl": "http://127.0.0.1:1080"
+    "workRoot": "/srv/agent-fleet-workspaces",
+    "proxyUrl": "http://127.0.0.1:1080",
+    "tags": ["remote", "linux", "high-cpu"],
+    "capacity": 2
   }'
+```
+
+Register as many remote nodes as are available. `aicp-hhht-231` is one SSH config host example, not a singleton or special project:
+
+```sh
+curl -X POST http://127.0.0.1:8787/api/execution-nodes \
+  -H 'content-type: application/json' \
+  -d '{
+    "name": "aicp-hhht-231",
+    "kind": "remote",
+    "status": "ready",
+    "sshHost": "aicp-hhht-231",
+    "workRoot": "/root/agent-fleet-workspaces",
+    "proxyUrl": "http://127.0.0.1:1080",
+    "tags": ["remote", "linux", "china-network", "high-cpu"],
+    "capacity": 2
+  }'
+```
+
+Only add the `gpu` tag after a read-only probe confirms GPU capability, for example `ssh aicp-hhht-231 'command -v nvidia-smi && nvidia-smi -L'`. Do not infer GPU capability from the host name.
+
+The SSH client should resolve the alias from `~/.ssh/config`, for example:
+
+```sshconfig
+Host aicp-hhht-231
+  HostName 1.180.13.251
+  User root
+  IdentityFile ~/.ssh/id_rsa
+  Port 231
+  RemoteForward 127.0.0.1:1080 127.0.0.1:1080
 ```
 
 Fields:
@@ -89,8 +134,25 @@ Fields:
 | `sshHost` | For ready remote nodes | SSH target such as `worker@mac-mini.local`; use `null` for local nodes. |
 | `workRoot` | Yes | Absolute path where Worker sessions should run on that node. |
 | `proxyUrl` | No | Forwarded proxy URL visible from the remote process, or `null`. |
+| `tags` | No | Capability tags such as `remote`, `linux`, `gpu`, `high-cpu`, `china-network`, or `cuda`. Missing tags default to `[]` for old state. |
+| `capacity` | No | Maximum concurrent Worker sessions for this node. Missing capacity defaults to `1` for old state. |
 
 When a remote node is marked `ready`, the API rejects clearly unusable records such as a missing SSH host or a relative work root. Nodes can still be registered as `unknown` while SSH, folders, and proxy forwarding are being prepared.
+
+## Dispatch Behavior
+
+When a goal is accepted:
+
+- The Steward detects simple resource needs from the goal title and body.
+- GPU goals currently match keywords such as `gpu`, `cuda`, `训练`, `模型`, `推理`, and `渲染`.
+- CPU-heavy goals currently match keywords such as `heavy`, `高负载`, `并行`, `build`, and `test`.
+- The Steward filters for ready remote nodes whose `sshHost` is set, whose `workRoot` is absolute, and whose current running Worker sessions are below `capacity`.
+- The scheduler prefers nodes whose tags satisfy the detected resource need, then nodes with more available slots, then dashboard order for deterministic tie-breaking.
+- The Worker session uses the SSH Worker adapter and records `hostId` as the selected execution node id.
+- If no ready remote node has capacity, the Steward uses the local Worker adapter and records `hostId: null`.
+- Remote Worker commands receive proxy environment variables when the selected node has `proxyUrl` set.
+
+Workspace sync is not implemented yet. Until it is, a remote Worker can only succeed when the expected source checkout already exists or the Worker command itself can create/sync it from git. This is the remaining blocker before treating the remote pool as fully disposable compute.
 
 ## Readiness Model
 

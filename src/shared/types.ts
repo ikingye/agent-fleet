@@ -80,6 +80,8 @@ export interface ExecutionNode {
   sshHost: string | null;
   workRoot: string;
   proxyUrl: string | null;
+  tags: string[];
+  capacity: number;
   createdAt: string;
   updatedAt: string;
 }

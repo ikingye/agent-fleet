@@ -52,6 +52,236 @@ class FakeWorkerAdapter implements WorkerAdapter {
 }
 
 describe("StewardRuntime", () => {
+  it("prefers a ready remote execution node and records its host id", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const remoteNode = await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: "http://127.0.0.1:1080"
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Offload remote dispatch",
+        body: "Run this Worker Agent away from the Mac."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(localAdapter.startInputs).toHaveLength(0);
+      expect(remoteAdapter.startInputs).toHaveLength(1);
+      expect(remoteAdapter.startInputs[0].cwd).toBe("/srv/agent-fleet/agent-fleet/agent-fleet");
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: remoteNode.id,
+        cwd: "/srv/agent-fleet/agent-fleet/agent-fleet"
+      });
+      expect(dashboard.worktreeAssignments[0]).toMatchObject({
+        repositoryPath: "/projects/agent-fleet",
+        worktreePath: "/srv/agent-fleet/agent-fleet/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("selects a GPU-tagged ready remote node for GPU goals", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const cpuAdapter = new FakeWorkerAdapter();
+    const gpuAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-cpu",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-cpu.internal",
+        workRoot: "/srv/cpu",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 2
+      });
+      const gpuNode = await store.upsertExecutionNode({
+        name: "linux-gpu",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-gpu.internal",
+        workRoot: "/srv/gpu",
+        proxyUrl: null,
+        tags: ["remote", "linux", "gpu", "cuda"],
+        capacity: 1
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: (node) => (node.id === gpuNode.id ? gpuAdapter : cpuAdapter)
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run CUDA model inference",
+        body: "Use GPU for 模型 推理."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(localAdapter.startInputs).toHaveLength(0);
+      expect(cpuAdapter.startInputs).toHaveLength(0);
+      expect(gpuAdapter.startInputs).toHaveLength(1);
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: gpuNode.id,
+        cwd: "/srv/gpu/agent-fleet/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips ready remote nodes at capacity and falls back to the next available remote", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const firstAdapter = new FakeWorkerAdapter();
+    const secondAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const goal = await store.createGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Existing remote work",
+        body: "Already running."
+      });
+      const decision = await store.recordDecision({
+        goalId: goal.id,
+        workerSessionId: null,
+        title: "Existing Worker",
+        rationale: "Existing load consumes capacity.",
+        risk: "low",
+        confidence: 1,
+        reversible: true,
+        needsHumanReview: false,
+        status: "active",
+        actions: []
+      });
+      const busyNode = await store.upsertExecutionNode({
+        name: "busy-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@busy.internal",
+        workRoot: "/srv/busy",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 1
+      });
+      const availableNode = await store.upsertExecutionNode({
+        name: "available-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@available.internal",
+        workRoot: "/srv/available",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 1
+      });
+      await store.createWorkerSession({
+        goalId: goal.id,
+        decisionId: decision.id,
+        kind: "codex",
+        command: "codexyoloproxy",
+        cwd: "/srv/busy/agent-fleet/agent-fleet",
+        pid: 1111,
+        hostId: busyNode.id,
+        resumeId: "resume-busy",
+        status: "running"
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: new FakeWorkerAdapter(),
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: (node) => (node.id === busyNode.id ? firstAdapter : secondAdapter)
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run heavy build and test",
+        body: "High-load parallel test work should avoid saturated nodes."
+      });
+
+      const dashboard = await store.dashboard();
+      const newSession = dashboard.workerSessions.at(-1);
+
+      expect(firstAdapter.startInputs).toHaveLength(0);
+      expect(secondAdapter.startInputs).toHaveLength(1);
+      expect(newSession).toMatchObject({
+        hostId: availableNode.id,
+        cwd: "/srv/available/agent-fleet/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the local Worker adapter when no remote execution node is ready", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "unknown",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: "http://127.0.0.1:1080"
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Use local fallback",
+        body: "Run locally if remote is not ready."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(remoteAdapter.startInputs).toHaveLength(0);
+      expect(localAdapter.startInputs).toHaveLength(1);
+      expect(localAdapter.startInputs[0].cwd).toBe("/projects/agent-fleet");
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: null,
+        cwd: "/projects/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("turns a human goal into an auditable decision and Worker session", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
 

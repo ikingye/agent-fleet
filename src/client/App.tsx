@@ -70,6 +70,8 @@ export function App() {
   const [nodeSshHost, setNodeSshHost] = useState("");
   const [nodeWorkRoot, setNodeWorkRoot] = useState("");
   const [nodeProxyUrl, setNodeProxyUrl] = useState("");
+  const [nodeTags, setNodeTags] = useState("");
+  const [nodeCapacity, setNodeCapacity] = useState("1");
   const [nodeStatus, setNodeStatus] = useState<ExecutionNode["status"]>("unknown");
   const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -198,12 +200,19 @@ export function App() {
         status: nodeStatus,
         sshHost: nodeSshHost.trim() === "" ? null : nodeSshHost.trim(),
         workRoot: nodeWorkRoot.trim(),
-        proxyUrl: nodeProxyUrl.trim() === "" ? null : nodeProxyUrl.trim()
+        proxyUrl: nodeProxyUrl.trim() === "" ? null : nodeProxyUrl.trim(),
+        tags: nodeTags
+          .split(",")
+          .map((tag) => tag.trim().toLowerCase())
+          .filter((tag) => tag !== ""),
+        capacity: Number.parseInt(nodeCapacity, 10)
       });
       setNodeName("");
       setNodeSshHost("");
       setNodeWorkRoot("");
       setNodeProxyUrl("");
+      setNodeTags("");
+      setNodeCapacity("1");
       setNodeStatus("unknown");
       await refresh();
     } catch (nodeError) {
@@ -581,6 +590,22 @@ export function App() {
               type="url"
               value={nodeProxyUrl}
             />
+            <input
+              aria-label="Tags"
+              onChange={(event) => setNodeTags(event.target.value)}
+              placeholder="remote, linux, high-cpu"
+              type="text"
+              value={nodeTags}
+            />
+            <input
+              aria-label="Capacity"
+              min="1"
+              onChange={(event) => setNodeCapacity(event.target.value)}
+              placeholder="capacity"
+              required
+              type="number"
+              value={nodeCapacity}
+            />
             <select
               aria-label="Remote node status"
               onChange={(event) => setNodeStatus(event.target.value as ExecutionNode["status"])}
@@ -616,6 +641,14 @@ export function App() {
                       <div>
                         <dt>root</dt>
                         <dd>{displayPath(node.workRoot)}</dd>
+                      </div>
+                      <div>
+                        <dt>tags</dt>
+                        <dd>{node.tags.length === 0 ? "none" : node.tags.join(", ")}</dd>
+                      </div>
+                      <div>
+                        <dt>capacity</dt>
+                        <dd>{node.capacity}</dd>
                       </div>
                     </dl>
                   </div>

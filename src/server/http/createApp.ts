@@ -17,6 +17,7 @@ import {
   parseWorkerCommandArgs,
   type WorkerAdapter
 } from "../workers/commandWorkerAdapter.js";
+import { RemoteSshWorkerAdapter, type SshWorkerProcessRunner } from "../workers/sshWorkerAdapter.js";
 
 export interface CreateAppOptions {
   statePath?: string;
@@ -28,6 +29,8 @@ export interface CreateAppOptions {
   materializeWorktrees?: boolean;
   worktreeRunner?: MaterializeWorktreeRunner;
   workerAdapter?: WorkerAdapter;
+  remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
+  remoteSshWorkerRunner?: SshWorkerProcessRunner;
   workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
 }
 
@@ -78,6 +81,36 @@ function stringArray(value: unknown, name: string): string[] {
   }
 
   return value.map((item, index) => requireString(item, `${name}[${index}]`));
+}
+
+function optionalTags(value: unknown): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error("tags must be an array of strings");
+  }
+
+  return [
+    ...new Set(
+      value
+        .map((item, index) => requireString(item, `tags[${index}]`).toLowerCase())
+        .filter((tag) => tag !== "")
+    )
+  ];
+}
+
+function optionalCapacity(value: unknown): number {
+  if (value === undefined || value === null) {
+    return 1;
+  }
+
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1) {
+    throw new Error("capacity must be a positive number");
+  }
+
+  return Math.floor(value);
 }
 
 function requireWorkerSessionStatus(value: unknown): WorkerSessionStatus {
@@ -131,7 +164,9 @@ function parseExecutionNodeInput(body: Record<string, unknown>): Omit<ExecutionN
     status: requireExecutionNodeStatus(body.status),
     sshHost: optionalString(body.sshHost, "sshHost"),
     workRoot: requireString(body.workRoot, "workRoot"),
-    proxyUrl: optionalString(body.proxyUrl, "proxyUrl")
+    proxyUrl: optionalString(body.proxyUrl, "proxyUrl"),
+    tags: optionalTags(body.tags),
+    capacity: optionalCapacity(body.capacity)
   };
 }
 
@@ -215,13 +250,24 @@ export async function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const store = await JsonControlPlaneStore.open(options.statePath ?? defaultStatePath());
   const workerArgs = options.workerArgs ?? parseWorkerCommandArgs(process.env.AGENT_FLEET_WORKER_ARGS);
+  const workerCommand = options.workerCommand ?? "codexyoloproxy";
   const workerAdapter =
-    options.workerAdapter ?? new CommandWorkerAdapter(options.workerCommand ?? "codexyoloproxy", workerArgs);
+    options.workerAdapter ?? new CommandWorkerAdapter(workerCommand, workerArgs);
   const defaultRepositoryPath = options.defaultRepositoryPath ?? process.cwd();
   const materializeWorktrees = options.materializeWorktrees ?? process.env.AGENT_FLEET_MATERIALIZE_WORKTREES === "true";
   const steward = new StewardRuntime({
     store,
     workerAdapter,
+    remoteWorkerAdapterFactory:
+      options.remoteWorkerAdapterFactory ??
+      ((node) =>
+        new RemoteSshWorkerAdapter({
+          sshHost: node.sshHost ?? "",
+          workerCommand,
+          workerArgs,
+          proxyEnv: buildRemoteProxyEnv(node.proxyUrl),
+          runner: options.remoteSshWorkerRunner
+        })),
     defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd(),
     defaultRepositoryPath,
     worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees"),
@@ -456,4 +502,19 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   return app;
+}
+
+function buildRemoteProxyEnv(proxyUrl: string | null): Readonly<Record<string, string>> {
+  if (proxyUrl === null || proxyUrl.trim() === "") {
+    return {};
+  }
+
+  const normalizedProxyUrl = proxyUrl.trim();
+
+  return {
+    ALL_PROXY: normalizedProxyUrl,
+    HTTP_PROXY: normalizedProxyUrl,
+    HTTPS_PROXY: normalizedProxyUrl,
+    NO_PROXY: "localhost,127.0.0.1"
+  };
 }
