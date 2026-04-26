@@ -1238,6 +1238,245 @@ describe("API routes", () => {
     }
   });
 
+  it("exposes GitHub deploy-key lease acquire, list, renew, release, and expire endpoints", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const nodeResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "lease-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: "worker@lease-builder.internal",
+          workRoot: "/tmp/agent-fleet/work",
+          proxyUrl: null
+        }
+      });
+      const node = nodeResponse.json();
+
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Remote lease worker one",
+          body: "Use a shared deploy-key lease for the first remote Worker."
+        }
+      });
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Remote lease worker two",
+          body: "Use the same shared deploy-key lease for the second remote Worker."
+        }
+      });
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const [workerOne, workerTwo] = dashboard.workerSessions;
+      const acquirePayload = {
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        repositoryUrl: "git@github.com:owner/agent-fleet.git",
+        repositorySlug: "owner-agent-fleet",
+        githubDeployKeyId: "github-key-123",
+        publicKeyFingerprint: "SHA256:project-key",
+        localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+        remoteNodeId: node.id,
+        remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key"
+      };
+
+      const firstAcquireResponse = await app.inject({
+        method: "POST",
+        url: "/api/github-deploy-key-leases/acquire",
+        payload: {
+          ...acquirePayload,
+          workerSessionId: workerOne.id,
+          expiresAt: "2026-04-26T10:10:00.000Z",
+          now: "2026-04-26T10:00:00.000Z"
+        }
+      });
+      const firstLease = firstAcquireResponse.json().lease;
+      const secondAcquireResponse = await app.inject({
+        method: "POST",
+        url: "/api/github-deploy-key-leases/acquire",
+        payload: {
+          ...acquirePayload,
+          workerSessionId: workerTwo.id,
+          expiresAt: "2026-04-26T10:15:00.000Z",
+          now: "2026-04-26T10:05:00.000Z"
+        }
+      });
+      const sharedLease = secondAcquireResponse.json().lease;
+
+      expect(firstAcquireResponse.statusCode).toBe(200);
+      expect(secondAcquireResponse.statusCode).toBe(200);
+      expect(sharedLease.id).toBe(firstLease.id);
+      expect(sharedLease).toMatchObject({
+        activeWorkerSessionIds: [workerOne.id, workerTwo.id],
+        refcount: 2,
+        status: "active",
+        cleanupStatus: "not_requested",
+        expiresAt: "2026-04-26T10:15:00.000Z",
+        lastHeartbeatAt: "2026-04-26T10:05:00.000Z"
+      });
+
+      const listResponse = await app.inject({
+        method: "GET",
+        url: `/api/github-deploy-key-leases?workspacePath=${encodeURIComponent(
+          "/projects/agent-fleet"
+        )}&remoteNodeId=${node.id}&status=active`
+      });
+
+      expect(listResponse.statusCode).toBe(200);
+      expect(listResponse.json().leases).toEqual([expect.objectContaining({ id: firstLease.id })]);
+
+      const renewResponse = await app.inject({
+        method: "POST",
+        url: `/api/github-deploy-key-leases/${sharedLease.id}/renew`,
+        payload: {
+          workerSessionId: workerOne.id,
+          expiresAt: "2026-04-26T10:30:00.000Z",
+          now: "2026-04-26T10:20:00.000Z"
+        }
+      });
+
+      expect(renewResponse.statusCode).toBe(200);
+      expect(renewResponse.json().lease).toMatchObject({
+        refcount: 2,
+        expiresAt: "2026-04-26T10:30:00.000Z",
+        lastHeartbeatAt: "2026-04-26T10:20:00.000Z"
+      });
+
+      const releaseOneResponse = await app.inject({
+        method: "POST",
+        url: `/api/github-deploy-key-leases/${sharedLease.id}/release`,
+        payload: {
+          workerSessionId: workerOne.id,
+          now: "2026-04-26T10:21:00.000Z"
+        }
+      });
+
+      expect(releaseOneResponse.statusCode).toBe(200);
+      expect(releaseOneResponse.json().lease).toMatchObject({
+        activeWorkerSessionIds: [workerTwo.id],
+        refcount: 1,
+        status: "active",
+        cleanupStatus: "not_requested"
+      });
+
+      const releaseTwoResponse = await app.inject({
+        method: "POST",
+        url: `/api/github-deploy-key-leases/${sharedLease.id}/release`,
+        payload: {
+          workerSessionId: workerTwo.id,
+          now: "2026-04-26T10:22:00.000Z"
+        }
+      });
+
+      expect(releaseTwoResponse.statusCode).toBe(200);
+      expect(releaseTwoResponse.json().lease).toMatchObject({
+        activeWorkerSessionIds: [],
+        refcount: 0,
+        status: "released",
+        cleanupStatus: "pending"
+      });
+
+      const staleAcquireResponse = await app.inject({
+        method: "POST",
+        url: "/api/github-deploy-key-leases/acquire",
+        payload: {
+          ...acquirePayload,
+          workerSessionId: workerOne.id,
+          expiresAt: "2026-04-26T11:00:00.000Z",
+          now: "2026-04-26T10:50:00.000Z"
+        }
+      });
+      const staleLease = staleAcquireResponse.json().lease;
+      const expireResponse = await app.inject({
+        method: "POST",
+        url: "/api/github-deploy-key-leases/expire",
+        payload: {
+          now: "2026-04-26T11:01:00.000Z"
+        }
+      });
+      const staleListResponse = await app.inject({
+        method: "GET",
+        url: "/api/github-deploy-key-leases?status=stale"
+      });
+
+      expect(expireResponse.statusCode).toBe(200);
+      expect(expireResponse.json()).toEqual({ expiredLeaseIds: [staleLease.id] });
+      expect(staleListResponse.json().leases).toEqual([
+        expect.objectContaining({
+          id: staleLease.id,
+          activeWorkerSessionIds: [],
+          refcount: 0,
+          status: "stale",
+          cleanupStatus: "pending"
+        })
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("validates GitHub deploy-key lease endpoint payloads", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const acquireResponse = await app.inject({
+        method: "POST",
+        url: "/api/github-deploy-key-leases/acquire",
+        payload: {
+          projectName: "",
+          workspacePath: "/projects/agent-fleet",
+          repositoryUrl: "git@github.com:owner/agent-fleet.git",
+          repositorySlug: "owner-agent-fleet",
+          githubDeployKeyId: null,
+          publicKeyFingerprint: "SHA256:project-key",
+          localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+          remoteNodeId: "missing-node",
+          remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key",
+          workerSessionId: "missing-worker",
+          expiresAt: "2026-04-26T10:10:00.000Z"
+        }
+      });
+      const renewResponse = await app.inject({
+        method: "POST",
+        url: "/api/github-deploy-key-leases/missing-lease/renew",
+        payload: {
+          workerSessionId: "missing-worker",
+          expiresAt: "not-a-date"
+        }
+      });
+
+      expect(acquireResponse.statusCode).toBe(400);
+      expect(acquireResponse.json()).toMatchObject({
+        error: "Bad Request",
+        message: "projectName must be a non-empty string"
+      });
+      expect(renewResponse.statusCode).toBe(400);
+      expect(renewResponse.json()).toMatchObject({
+        error: "Bad Request",
+        message: "expiresAt must be a valid ISO date string"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("dispatches accepted goals to a ready remote execution node through SSH", async () => {
     const sshRunner = new CapturingSshRunner({
       status: "completed",

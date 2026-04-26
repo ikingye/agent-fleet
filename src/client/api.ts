@@ -1,4 +1,13 @@
-import type { DashboardData, DecisionCorrection, ExecutionNode, Goal, StewardMessage, WorkerReport } from "../shared/types.js";
+import type {
+  DashboardData,
+  DecisionCorrection,
+  ExecutionNode,
+  GithubDeployKeyLease,
+  GithubDeployKeyLeaseStatus,
+  Goal,
+  StewardMessage,
+  WorkerReport
+} from "../shared/types.js";
 
 export type { StewardMessage };
 
@@ -57,6 +66,57 @@ export interface SendStewardMessageResponse {
 }
 
 export type RegisterExecutionNodePayload = Omit<ExecutionNode, "id" | "createdAt" | "updatedAt">;
+
+export interface AcquireGithubDeployKeyLeasePayload {
+  projectName: string;
+  workspacePath: string;
+  repositoryUrl: string;
+  repositorySlug: string;
+  githubDeployKeyId: string | null;
+  publicKeyFingerprint: string;
+  localPrivateKeyPath: string;
+  remoteNodeId: string;
+  remotePrivateKeyPath: string;
+  workerSessionId: string;
+  expiresAt: string;
+  now?: string;
+}
+
+export interface RenewGithubDeployKeyLeasePayload {
+  workerSessionId: string;
+  expiresAt: string;
+  now?: string;
+}
+
+export interface ReleaseGithubDeployKeyLeasePayload {
+  workerSessionId: string;
+  now?: string;
+}
+
+export interface ExpireGithubDeployKeyLeasesPayload {
+  now?: string;
+}
+
+export interface ListGithubDeployKeyLeasesFilters {
+  projectName?: string;
+  workspacePath?: string;
+  repositoryUrl?: string;
+  repositorySlug?: string;
+  remoteNodeId?: string;
+  status?: GithubDeployKeyLeaseStatus;
+}
+
+export interface GithubDeployKeyLeaseResponse {
+  lease: GithubDeployKeyLease;
+}
+
+export interface ListGithubDeployKeyLeasesResponse {
+  leases: GithubDeployKeyLease[];
+}
+
+export interface ExpireGithubDeployKeyLeasesResponse {
+  expiredLeaseIds: string[];
+}
 
 export async function fetchDashboard(): Promise<ClientDashboardData> {
   const response = await fetch("/api/dashboard");
@@ -150,6 +210,108 @@ export async function registerExecutionNode(payload: RegisterExecutionNodePayloa
   }
 
   return response.json() as Promise<ExecutionNode>;
+}
+
+export async function listGithubDeployKeyLeases(
+  filters: ListGithubDeployKeyLeasesFilters = {}
+): Promise<GithubDeployKeyLease[]> {
+  const query = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") {
+      query.set(key, value);
+    }
+  }
+
+  const response = await fetch(`/api/github-deploy-key-leases${query.size > 0 ? `?${query.toString()}` : ""}`);
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch GitHub deploy-key leases.");
+  }
+
+  const data = (await response.json()) as ListGithubDeployKeyLeasesResponse;
+
+  return data.leases;
+}
+
+export async function acquireGithubDeployKeyLease(
+  payload: AcquireGithubDeployKeyLeasePayload
+): Promise<GithubDeployKeyLease> {
+  const response = await fetch("/api/github-deploy-key-leases/acquire", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to acquire GitHub deploy-key lease.");
+  }
+
+  const data = (await response.json()) as GithubDeployKeyLeaseResponse;
+
+  return data.lease;
+}
+
+export async function renewGithubDeployKeyLease(
+  leaseId: string,
+  payload: RenewGithubDeployKeyLeasePayload
+): Promise<GithubDeployKeyLease> {
+  const response = await fetch(`/api/github-deploy-key-leases/${leaseId}/renew`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to renew GitHub deploy-key lease.");
+  }
+
+  const data = (await response.json()) as GithubDeployKeyLeaseResponse;
+
+  return data.lease;
+}
+
+export async function releaseGithubDeployKeyLease(
+  leaseId: string,
+  payload: ReleaseGithubDeployKeyLeasePayload
+): Promise<GithubDeployKeyLease> {
+  const response = await fetch(`/api/github-deploy-key-leases/${leaseId}/release`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to release GitHub deploy-key lease.");
+  }
+
+  const data = (await response.json()) as GithubDeployKeyLeaseResponse;
+
+  return data.lease;
+}
+
+export async function expireGithubDeployKeyLeases(
+  payload: ExpireGithubDeployKeyLeasesPayload = {}
+): Promise<ExpireGithubDeployKeyLeasesResponse> {
+  const response = await fetch("/api/github-deploy-key-leases/expire", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to expire GitHub deploy-key leases.");
+  }
+
+  return response.json() as Promise<ExpireGithubDeployKeyLeasesResponse>;
 }
 
 async function postOwnerAction(path: string, failureMessage: string): Promise<unknown> {

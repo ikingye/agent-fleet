@@ -1,7 +1,13 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import { join } from "node:path";
-import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
+import type {
+  DashboardData,
+  ExecutionNode,
+  GithubDeployKeyLeaseStatus,
+  StewardCheckpointReason,
+  WorkerSessionStatus
+} from "../../shared/types.js";
 import { probeRemoteExecutionNode, type RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { normalizeRemoteWorkRoot } from "../remote/remotePaths.js";
@@ -69,6 +75,25 @@ function optionalString(value: unknown, name: string): string | null {
 
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function requireIsoDateString(value: unknown, name: string): string {
+  const dateString = requireString(value, name);
+  const timestamp = Date.parse(dateString);
+
+  if (Number.isNaN(timestamp)) {
+    throw new Error(`${name} must be a valid ISO date string`);
+  }
+
+  return dateString;
+}
+
+function optionalIsoDateString(value: unknown, name: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return requireIsoDateString(value, name);
 }
 
 function optionalLastOutput(value: unknown): string | undefined {
@@ -169,6 +194,18 @@ function requireExecutionNodeStatus(value: unknown): ExecutionNode["status"] {
   throw new Error("status must be one of: ready, offline, unknown");
 }
 
+function optionalGithubDeployKeyLeaseStatus(value: unknown): GithubDeployKeyLeaseStatus | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+
+  if (value === "active" || value === "released" || value === "stale") {
+    return value;
+  }
+
+  throw new Error("status must be one of: active, released, stale");
+}
+
 function parseExecutionNodeInput(body: Record<string, unknown>): Omit<ExecutionNode, "id" | "createdAt" | "updatedAt"> {
   const kind = requireExecutionNodeKind(body.kind);
 
@@ -211,6 +248,14 @@ function defaultStatePath(): string {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function githubDeployKeyLeaseErrorStatus(error: Error): 400 | 404 {
+  return error.message.startsWith("Worker session not found:") ||
+    error.message.startsWith("Execution node not found:") ||
+    error.message.startsWith("GitHub deploy-key lease not found:")
+    ? 404
+    : 400;
 }
 
 export async function createApp(options: CreateAppOptions = {}) {
@@ -321,6 +366,146 @@ export async function createApp(options: CreateAppOptions = {}) {
     }
 
     throw error;
+  });
+
+  app.get("/api/github-deploy-key-leases", async (request, reply) => {
+    const query = requestBody(request.query);
+
+    try {
+      const projectName = optionalString(query.projectName, "projectName");
+      const workspacePath = optionalString(query.workspacePath, "workspacePath");
+      const repositoryUrl = optionalString(query.repositoryUrl, "repositoryUrl");
+      const repositorySlug = optionalString(query.repositorySlug, "repositorySlug");
+      const remoteNodeId = optionalString(query.remoteNodeId, "remoteNodeId");
+      const status = optionalGithubDeployKeyLeaseStatus(query.status);
+      const dashboard = await store.dashboard();
+      const leases = dashboard.githubDeployKeyLeases.filter(
+        (lease) =>
+          (projectName === null || lease.projectName === projectName) &&
+          (workspacePath === null || lease.workspacePath === workspacePath) &&
+          (repositoryUrl === null || lease.repositoryUrl === repositoryUrl) &&
+          (repositorySlug === null || lease.repositorySlug === repositorySlug) &&
+          (remoteNodeId === null || lease.remoteNodeId === remoteNodeId) &&
+          (status === undefined || lease.status === status)
+      );
+
+      return { leases };
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/github-deploy-key-leases/acquire", async (request, reply) => {
+    const body = requestBody(request.body);
+
+    try {
+      const lease = await store.acquireGithubDeployKeyLease({
+        projectName: requireString(body.projectName, "projectName"),
+        workspacePath: requireString(body.workspacePath, "workspacePath"),
+        repositoryUrl: requireString(body.repositoryUrl, "repositoryUrl"),
+        repositorySlug: requireString(body.repositorySlug, "repositorySlug"),
+        githubDeployKeyId: optionalString(body.githubDeployKeyId, "githubDeployKeyId"),
+        publicKeyFingerprint: requireString(body.publicKeyFingerprint, "publicKeyFingerprint"),
+        localPrivateKeyPath: requireString(body.localPrivateKeyPath, "localPrivateKeyPath"),
+        remoteNodeId: requireString(body.remoteNodeId, "remoteNodeId"),
+        remotePrivateKeyPath: requireString(body.remotePrivateKeyPath, "remotePrivateKeyPath"),
+        workerSessionId: requireString(body.workerSessionId, "workerSessionId"),
+        expiresAt: requireIsoDateString(body.expiresAt, "expiresAt"),
+        now: optionalIsoDateString(body.now, "now")
+      });
+
+      return { lease };
+    } catch (error) {
+      if (error instanceof Error) {
+        const statusCode = githubDeployKeyLeaseErrorStatus(error);
+
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/github-deploy-key-leases/expire", async (request, reply) => {
+    const body = requestBody(request.body);
+
+    try {
+      return await store.expireGithubDeployKeyLeases({
+        now: optionalIsoDateString(body.now, "now")
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/github-deploy-key-leases/:id/renew", async (request, reply) => {
+    const params = request.params as { id?: string };
+    const body = requestBody(request.body);
+
+    try {
+      const lease = await store.renewGithubDeployKeyLease({
+        leaseId: requireString(params.id, "id"),
+        workerSessionId: requireString(body.workerSessionId, "workerSessionId"),
+        expiresAt: requireIsoDateString(body.expiresAt, "expiresAt"),
+        now: optionalIsoDateString(body.now, "now")
+      });
+
+      return { lease };
+    } catch (error) {
+      if (error instanceof Error) {
+        const statusCode = githubDeployKeyLeaseErrorStatus(error);
+
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/github-deploy-key-leases/:id/release", async (request, reply) => {
+    const params = request.params as { id?: string };
+    const body = requestBody(request.body);
+
+    try {
+      const lease = await store.releaseGithubDeployKeyLease({
+        leaseId: requireString(params.id, "id"),
+        workerSessionId: requireString(body.workerSessionId, "workerSessionId"),
+        now: optionalIsoDateString(body.now, "now")
+      });
+
+      return { lease };
+    } catch (error) {
+      if (error instanceof Error) {
+        const statusCode = githubDeployKeyLeaseErrorStatus(error);
+
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
   });
 
   app.post("/api/steward/messages", async (request, reply) => {
