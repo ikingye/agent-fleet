@@ -26,6 +26,12 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 
 The first implementation uses `.agent-fleet/control-plane.json`. This keeps the project easy to inspect and test. A future database can preserve the same domain records while improving concurrency, querying, and log volume.
 
+## Worktrees
+
+Worktree planning is metadata-only. `planWorktree` derives the intended branch, path, and human-readable command for a Worker Agent assignment without touching git or the filesystem.
+
+Worktree materialization performs the side effects behind an injected runner. `materializeWorktree` checks whether the planned path already exists, creates the parent directory when needed, and runs `git worktree add` with an argument array instead of a shell command string.
+
 ## Boundary Rules
 
 - HTTP routes should not directly spawn Worker commands.
