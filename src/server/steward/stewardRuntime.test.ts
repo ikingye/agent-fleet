@@ -3,13 +3,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
+import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js";
 import { StewardRuntime } from "./stewardRuntime.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
 class FakeWorkerAdapter implements WorkerAdapter {
   readonly kind = "codex";
+  readonly startInputs: Array<{ goalTitle: string; prompt: string; cwd: string }> = [];
 
   async start(input: { goalTitle: string; prompt: string; cwd: string }) {
+    this.startInputs.push(input);
+
     return {
       command: "codexyoloproxy",
       cwd: input.cwd,
@@ -189,6 +193,62 @@ describe("StewardRuntime", () => {
       });
 
       expect(goal.status).toBe("completed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes a worktree before starting the Worker when a runner is configured", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const events: string[] = [];
+    const workerAdapter = new FakeWorkerAdapter();
+    const runner: MaterializeWorktreeRunner = {
+      pathExists: async () => {
+        events.push("pathExists");
+        return false;
+      },
+      ensureDir: async () => {
+        events.push("ensureDir");
+      },
+      run: async () => {
+        events.push("run");
+        return {
+          exitCode: 0,
+          stdout: "created",
+          stderr: ""
+        };
+      }
+    };
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter,
+        defaultWorkerCwd: "/repo/agent-fleet",
+        defaultRepositoryPath: "/repo/agent-fleet",
+        worktreeRoot: "/repo/agent-fleet/.worktrees",
+        worktreeRunner: runner
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        title: "Bootstrap agent-fleet",
+        body: "Build the first Steward/Worker loop."
+      });
+
+      const dashboard = await store.dashboard();
+      events.push("assert");
+
+      expect(workerAdapter.startInputs[0].cwd).toBe(dashboard.worktreeAssignments[0].worktreePath);
+      expect(dashboard.workerSessions[0].cwd).toBe(dashboard.worktreeAssignments[0].worktreePath);
+      expect(dashboard.worktreeAssignments[0]).toMatchObject({
+        repositoryPath: "/repo/agent-fleet",
+        status: "planned"
+      });
+      expect(dashboard.worktreeAssignments[0].branchName).toContain("agent-fleet/");
+      expect(dashboard.worktreeAssignments[0].worktreePath).toContain("bootstrap-agent-fleet");
+      expect(events.slice(0, 3)).toEqual(["pathExists", "ensureDir", "run"]);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

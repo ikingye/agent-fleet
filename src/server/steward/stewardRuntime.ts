@@ -1,7 +1,12 @@
 import { join } from "node:path";
 import type { Goal, DecisionCorrection } from "../../shared/types.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
-import { planWorktree } from "../worktrees/worktreeManager.js";
+import {
+  materializeWorktree,
+  planWorktree,
+  type MaterializeWorktreeRunner,
+  type PlannedWorktree
+} from "../worktrees/worktreeManager.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
 export interface StewardRuntimeOptions {
@@ -10,6 +15,7 @@ export interface StewardRuntimeOptions {
   defaultWorkerCwd: string;
   defaultRepositoryPath?: string;
   worktreeRoot?: string;
+  worktreeRunner?: MaterializeWorktreeRunner;
 }
 
 export interface AcceptGoalInput {
@@ -44,9 +50,26 @@ export class StewardRuntime {
         "Track resume metadata for recovery"
       ]
     });
+    const repositoryPath = this.options.defaultRepositoryPath ?? process.cwd();
+    const worktreeRoot = this.options.worktreeRoot ?? join(repositoryPath, ".worktrees");
+    let plannedWorktree: PlannedWorktree | null = null;
+    let workerCwd = this.options.defaultWorkerCwd;
+
+    if (this.options.worktreeRunner !== undefined) {
+      plannedWorktree = planWorktree({
+        projectName: goal.projectName,
+        repositoryPath,
+        worktreeRoot,
+        goalTitle: goal.title,
+        workerSessionId: decision.id
+      });
+      await materializeWorktree(plannedWorktree, this.options.worktreeRunner);
+      workerCwd = plannedWorktree.path;
+    }
+
     const workerResult = await this.options.workerAdapter.start({
       goalTitle: goal.title,
-      cwd: this.options.defaultWorkerCwd,
+      cwd: workerCwd,
       prompt: this.buildWorkerPrompt(goal.title, goal.body)
     });
     const session = await this.options.store.createWorkerSession({
@@ -62,11 +85,10 @@ export class StewardRuntime {
       lastOutput: workerResult.initialOutput
     });
 
-    const repositoryPath = this.options.defaultRepositoryPath ?? process.cwd();
-    const plannedWorktree = planWorktree({
+    plannedWorktree ??= planWorktree({
       projectName: goal.projectName,
       repositoryPath,
-      worktreeRoot: this.options.worktreeRoot ?? join(repositoryPath, ".worktrees"),
+      worktreeRoot,
       goalTitle: goal.title,
       workerSessionId: session.id
     });

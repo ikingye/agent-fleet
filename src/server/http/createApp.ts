@@ -5,6 +5,8 @@ import type { ExecutionNode } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { StewardRuntime } from "../steward/stewardRuntime.js";
+import { createNodeWorktreeRunner } from "../worktrees/nodeWorktreeRunner.js";
+import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js";
 import { CommandWorkerAdapter, type WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
 export interface CreateAppOptions {
@@ -13,6 +15,8 @@ export interface CreateAppOptions {
   defaultWorkerCwd?: string;
   defaultRepositoryPath?: string;
   worktreeRoot?: string;
+  materializeWorktrees?: boolean;
+  worktreeRunner?: MaterializeWorktreeRunner;
   workerAdapter?: WorkerAdapter;
 }
 
@@ -95,12 +99,15 @@ export async function createApp(options: CreateAppOptions = {}) {
   const store = await JsonControlPlaneStore.open(options.statePath ?? defaultStatePath());
   const workerAdapter = options.workerAdapter ?? new CommandWorkerAdapter(options.workerCommand ?? "codexyoloproxy");
   const defaultRepositoryPath = options.defaultRepositoryPath ?? process.cwd();
+  const materializeWorktrees = options.materializeWorktrees ?? process.env.AGENT_FLEET_MATERIALIZE_WORKTREES === "true";
   const steward = new StewardRuntime({
     store,
     workerAdapter,
     defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd(),
     defaultRepositoryPath,
-    worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees")
+    worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees"),
+    worktreeRunner:
+      options.worktreeRunner ?? (materializeWorktrees ? createNodeWorktreeRunner(defaultRepositoryPath) : undefined)
   });
 
   await app.register(cors, {

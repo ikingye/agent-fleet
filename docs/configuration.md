@@ -9,6 +9,7 @@ agent-fleet reads configuration from environment variables.
 | `AGENT_FLEET_STATE` | `.agent-fleet/control-plane.json` | JSON control-plane state path. |
 | `AGENT_FLEET_WORKER_COMMAND` | `codexyoloproxy` | Worker command or zsh alias to launch. |
 | `AGENT_FLEET_WORKER_CWD` | current working directory | Working directory passed to Worker sessions. |
+| `AGENT_FLEET_MATERIALIZE_WORKTREES` | `false` | Set to `true` to create git worktrees before starting Worker sessions. |
 
 ## Local State
 
