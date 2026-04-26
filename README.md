@@ -11,9 +11,9 @@ The project is not open source yet. It is maintained with public-project hygiene
 agent-fleet removes the human bottleneck from multi-agent development:
 
 - One Steward Agent becomes the only human-facing interface.
-- Worker Agents such as Codex or Claude receive clearly labeled task instructions from the Steward as if it were the owner.
+- Worker Agents such as Codex or Claude receive explicit Worker Names from the Steward, such as `agent-fleet-compact-dashboard-ui-20260426T164821+0800`, and report back under that same heading.
 - Conversation history, goals, decisions, corrections, checkpoints, resume ids, process ids, Worker sessions, and project memory become durable state.
-- Every project goal has an explicit target `workspacePath`, for example `/Users/yewang/code/project/mahjong`; Worker cwd/project work happens there unless the owner explicitly asks to work on agent-fleet itself.
+- Every project goal has an explicit target `workspacePath`, for example `~/code/project/mahjong`; Worker cwd/project work happens there unless the owner explicitly asks to work on agent-fleet itself.
 - Parallel work can be coordinated through git worktrees instead of one terminal checkout.
 - Heavy agent work can later move to remote machines while the local Mac remains usable.
 
@@ -48,13 +48,13 @@ npm run build
 Run locally:
 
 ```sh
-cd /Users/yewang/code/project/agent-fleet
+cd ~/code/project/agent-fleet
 npm run dev
 ```
 
 The API listens on `127.0.0.1:8787` by default and the Vite web app listens on `127.0.0.1:5173`.
 
-Open `http://127.0.0.1:5173`, use Steward Chat as the owner's primary surface, and submit work through Steward Intake with an explicit Target directory. For normal product work the target `workspacePath` should be the business project, such as `/Users/yewang/code/project/mahjong`, not this agent-fleet repository. The Steward records that path with the goal and Worker cwd/project work belongs there unless the owner explicitly asks to change agent-fleet itself.
+Open `http://127.0.0.1:5173`, use Steward Chat as the owner's primary surface, and submit work through Steward Intake with an explicit Target directory. For normal product work the target `workspacePath` should be the business project, such as `~/code/project/mahjong`, not this agent-fleet repository. The Steward records that path with the goal and Worker cwd/project work belongs there unless the owner explicitly asks to change agent-fleet itself.
 
 Local recovery:
 
@@ -89,7 +89,7 @@ See [docs/configuration.md](docs/configuration.md) for details.
 
 ## Verification Baseline
 
-At this documentation refresh, the control plane had passed `npm run check` and `npm run build`. The Mahjong target project at `/Users/yewang/code/project/mahjong` had passed `npm test`, `npm run check`, and `npm run build`.
+At this documentation refresh, the control plane had passed `npm run check` and `npm run build`. The Mahjong target project at `~/code/project/mahjong` had passed `npm test`, `npm run check`, and `npm run build`.
 
 ## Repository Layout
 

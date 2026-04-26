@@ -69,6 +69,34 @@ export async function reconcileWorkerSessions(input: SupervisorReconcileInput): 
   return result;
 }
 
+export async function probeLocalWorkerProcess(session: WorkerSession): Promise<WorkerProcessObservation> {
+  if (session.pid === null) {
+    return {
+      status: "missing",
+      message: "Worker process is missing"
+    };
+  }
+
+  try {
+    process.kill(session.pid, 0);
+
+    return {
+      status: "running"
+    };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "EPERM") {
+      return {
+        status: "running"
+      };
+    }
+
+    return {
+      status: "missing",
+      message: `pid ${session.pid} is no longer running`
+    };
+  }
+}
+
 function buildStatusUpdate(
   session: WorkerSession,
   observation: WorkerProcessObservation

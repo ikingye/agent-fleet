@@ -85,4 +85,47 @@ describe("reconcileWorkerSessions", () => {
       runningSessionIds: []
     });
   });
+
+  it("marks a stale running Worker session failed when no resume id is available", async () => {
+    const running = workerSession({
+      id: "worker-unresumable",
+      status: "running",
+      pid: 5252,
+      resumeId: null
+    });
+    const updates: Array<{ workerSessionId: string; status: string; lastOutput?: string }> = [];
+
+    const result = await reconcileWorkerSessions({
+      dashboard: dashboardWith([running]),
+      async probeProcess(session) {
+        return {
+          status: "missing",
+          message: `pid ${session.pid} is no longer running`
+        };
+      },
+      async updateWorkerSessionStatus(input) {
+        updates.push(input);
+        return {
+          ...running,
+          status: input.status,
+          lastOutput: input.lastOutput ?? running.lastOutput,
+          updatedAt: "2026-04-26T00:01:00.000Z"
+        };
+      }
+    });
+
+    expect(updates).toEqual([
+      {
+        workerSessionId: "worker-unresumable",
+        status: "failed",
+        lastOutput: "pid 5252 is no longer running"
+      }
+    ]);
+    expect(result).toEqual({
+      checked: 1,
+      updated: 1,
+      staleSessionIds: ["worker-unresumable"],
+      runningSessionIds: []
+    });
+  });
 });

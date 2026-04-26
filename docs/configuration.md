@@ -14,7 +14,7 @@ agent-fleet reads configuration from environment variables.
 
 ## Workspace Path
 
-Each owner goal must identify the target `workspacePath`, for example `/Users/yewang/code/project/mahjong`. The dashboard labels this field Target directory. The Steward records that path with the goal and Worker sessions should run in that project workspace unless the owner explicitly asks to work on agent-fleet.
+Each owner goal must identify the target `workspacePath`, for example `~/code/project/mahjong`. The dashboard labels this field Target directory. The Steward records that path with the goal and Worker sessions should run in that project workspace unless the owner explicitly asks to work on agent-fleet.
 
 `AGENT_FLEET_WORKER_CWD` exists for fallback compatibility. It does not change the product contract that project work is scoped by `workspacePath`.
 

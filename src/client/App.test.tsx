@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
@@ -240,6 +240,150 @@ describe("App", () => {
     expect(screen.getByText("Worker Agent session started with resume id resume-1.")).toBeInTheDocument();
   });
 
+  it("keeps active Worker sessions visible while collapsing stale failed history", async () => {
+    const staleDashboard = {
+      ...dashboard,
+      workerSessions: [
+        {
+          id: "worker-running",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "codex",
+          command: "codex",
+          cwd: "/worktrees/active",
+          pid: 5151,
+          hostId: null,
+          resumeId: "resume-active",
+          status: "running",
+          lastOutput: "still running",
+          createdAt: "2026-04-26T00:08:00.000Z",
+          updatedAt: "2026-04-26T00:08:00.000Z"
+        },
+        {
+          id: "worker-paused",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "claude_code",
+          command: "claude",
+          cwd: "/worktrees/paused",
+          pid: null,
+          hostId: null,
+          resumeId: "resume-paused",
+          status: "paused",
+          lastOutput: "waiting",
+          createdAt: "2026-04-26T00:07:00.000Z",
+          updatedAt: "2026-04-26T00:07:00.000Z"
+        },
+        {
+          id: "worker-failed-oldest",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "codex",
+          command: "codex",
+          cwd: "/worktrees/failed-oldest",
+          pid: null,
+          hostId: null,
+          resumeId: "resume-failed-oldest",
+          status: "failed",
+          lastOutput: "stack trace from oldest failure",
+          createdAt: "2026-04-26T00:01:00.000Z",
+          updatedAt: "2026-04-26T00:01:00.000Z"
+        },
+        {
+          id: "worker-failed-newer",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "codex",
+          command: "codex",
+          cwd: "/worktrees/failed-newer",
+          pid: null,
+          hostId: null,
+          resumeId: "resume-failed-newer",
+          status: "failed",
+          lastOutput: "stack trace from newer failure",
+          createdAt: "2026-04-26T00:03:00.000Z",
+          updatedAt: "2026-04-26T00:03:00.000Z"
+        },
+        {
+          id: "worker-completed-old",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "gemini_cli",
+          command: "gemini",
+          cwd: "/worktrees/completed-old",
+          pid: null,
+          hostId: null,
+          resumeId: "resume-completed-old",
+          status: "completed",
+          lastOutput: "completed output",
+          createdAt: "2026-04-26T00:02:00.000Z",
+          updatedAt: "2026-04-26T00:02:00.000Z"
+        }
+      ]
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(staleDashboard)));
+
+    render(<App />);
+
+    const workerPanel = await screen.findByRole("region", { name: "Worker Sessions" });
+    expect(within(workerPanel).getByText("/worktrees/active")).toBeInTheDocument();
+    expect(within(workerPanel).getByText("/worktrees/paused")).toBeInTheDocument();
+    expect(within(workerPanel).getByText("/worktrees/failed-oldest")).not.toBeVisible();
+    expect(within(workerPanel).getByText("3 historical sessions")).toBeInTheDocument();
+    expect(within(workerPanel).getByText("stack trace from oldest failure")).not.toBeVisible();
+  });
+
+  it("shows collapsed Worker history output when expanded without tall failed cards", async () => {
+    const staleDashboard = {
+      ...dashboard,
+      workerSessions: [
+        {
+          id: "worker-running",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "codex",
+          command: "codex",
+          cwd: "/worktrees/active",
+          pid: 5151,
+          hostId: null,
+          resumeId: "resume-active",
+          status: "running",
+          lastOutput: "still running",
+          createdAt: "2026-04-26T00:08:00.000Z",
+          updatedAt: "2026-04-26T00:08:00.000Z"
+        },
+        {
+          id: "worker-failed-oldest",
+          goalId: "goal-1",
+          decisionId: "decision-1",
+          kind: "codex",
+          command: "codex",
+          cwd: "/worktrees/failed-oldest",
+          pid: null,
+          hostId: null,
+          resumeId: "resume-failed-oldest",
+          status: "failed",
+          lastOutput: "stack trace from oldest failure",
+          createdAt: "2026-04-26T00:01:00.000Z",
+          updatedAt: "2026-04-26T00:01:00.000Z"
+        }
+      ]
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(staleDashboard)));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    const workerPanel = await screen.findByRole("region", { name: "Worker Sessions" });
+    await user.click(within(workerPanel).getByText("History"));
+
+    const history = within(workerPanel).getByRole("group", { name: "Historical Worker sessions" });
+    expect(within(history).getByText("codex")).toBeInTheDocument();
+    expect(within(history).getByText("failed")).toBeInTheDocument();
+    expect(within(history).getByText("/worktrees/failed-oldest")).toBeInTheDocument();
+    expect(within(history).getByText("stack trace from oldest failure")).toBeInTheDocument();
+  });
+
   it("submits a new goal to the Steward Agent", async () => {
     const fetchMock = vi
       .fn()
@@ -275,7 +419,52 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByText("target")).toBeInTheDocument();
-    expect(screen.getAllByText("/Users/yewang/code/project/agent-fleet").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("~/code/project/agent-fleet").length).toBeGreaterThan(0);
+  });
+
+  it("displays owner home paths with a tilde without changing stored dashboard values", async () => {
+    const homePathDashboard = {
+      ...dashboard,
+      goals: [
+        {
+          ...dashboard.goals[0],
+          workspacePath: "/Users/yewang/code/project/mahjong"
+        }
+      ],
+      workerSessions: [
+        {
+          ...dashboard.workerSessions[0],
+          cwd: "/Users/yewang/code/project/mahjong/.worktrees/worker-1"
+        }
+      ],
+      stewardMessages: [
+        {
+          ...dashboard.stewardMessages[0],
+          workspacePath: "/Users/yewang/code/project/mahjong"
+        }
+      ],
+      worktreeAssignments: [
+        {
+          ...dashboard.worktreeAssignments[0],
+          repositoryPath: "/Users/yewang/code/project/mahjong",
+          worktreePath: "/Users/yewang/code/project/mahjong/.worktrees/worker-1"
+        }
+      ],
+      executionNodes: [
+        {
+          ...dashboard.executionNodes[0],
+          workRoot: "/Users/yewang/code/project/mahjong/.worktrees"
+        }
+      ]
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(homePathDashboard)));
+
+    render(<App />);
+
+    expect(await screen.findAllByText("~/code/project/mahjong")).toHaveLength(3);
+    expect(screen.getAllByText("~/code/project/mahjong/.worktrees/worker-1")).toHaveLength(2);
+    expect(screen.getByText("~/code/project/mahjong/.worktrees")).toBeInTheDocument();
+    expect(screen.queryByText("/Users/yewang/code/project/mahjong")).not.toBeInTheDocument();
   });
 
   it("renders persisted Steward chat messages and sends owner messages with context", async () => {

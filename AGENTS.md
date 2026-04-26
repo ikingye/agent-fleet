@@ -22,7 +22,7 @@ Prefer the shared copy when a skill is agent-neutral. Do not duplicate shared sk
 - The human should interact with one Steward Agent, not many terminal sessions.
 - Worker Agents should treat Steward instructions as the human owner's instructions.
 - Conversation history, including Steward Chat `stewardMessages`, decisions, corrections, goals, checkpoints, resume ids, Worker sessions, remote nodes, worktrees, events, and memory must be durable and inspectable.
-- Each owner goal must carry an explicit target `workspacePath`. Worker cwd/project work belongs in that workspace, such as `/Users/yewang/code/project/mahjong`, not in agent-fleet unless the owner explicitly asks to modify agent-fleet.
+- Each owner goal must carry an explicit target `workspacePath`. Worker cwd/project work belongs in that workspace, such as `~/code/project/mahjong`, not in agent-fleet unless the owner explicitly asks to modify agent-fleet.
 - Routine decisions should be autonomous; high-impact decisions should be logged for later human review.
 - The dashboard is a compact management/control-plane surface for Steward Chat, intake, status, review, recovery, correction, and memory. Do not embed business project UI or product-specific app code in agent-fleet.
 - Git worktrees and remote execution are core scalability mechanisms, not optional polish.
@@ -35,7 +35,9 @@ The full product brief lives in [docs/product-brief.md](docs/product-brief.md).
 - The owner interacts primarily with the Steward; the Steward coordinates Worker Agents instead of asking the owner to manage many terminals.
 - When the owner sends a new instruction, the Steward should usually either spawn a named Worker Agent for a concrete task or route the update to an existing relevant Worker.
 - Keep Steward context compact: retain goals, decisions, the active Worker map, blockers, and verification results; delegate code reading, implementation, review, and testing to Workers where practical.
-- Worker task names and reports should start with a clear task label such as `Worker: compact-dashboard-ui`; random nicknames are not sufficient task identity.
+- Every Worker task must have a human-readable Worker Name in the format `<project-name>-<worker-purpose>-<worker-start-time-string>`, such as `agent-fleet-compact-dashboard-ui-20260426T164821+0800` or `mahjong-project-readiness-20260426T164821+0800`.
+- The Steward must put the Worker Name at the top of the Worker prompt and require the Worker to use that exact name as the heading of its final report.
+- If the underlying spawn system assigns a random nickname, that nickname is secondary; the explicit Worker Name is the source of truth.
 - The Steward should not stop merely because one subtask finished. It should ask what remains and continue with the next Worker or verification step unless blocked.
 
 ## Code Organization

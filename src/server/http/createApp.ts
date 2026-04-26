@@ -5,6 +5,10 @@ import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessi
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
+import {
+  probeLocalWorkerProcess,
+  reconcileWorkerSessions
+} from "../steward/supervisorRuntime.js";
 import { StewardRuntime } from "../steward/stewardRuntime.js";
 import { createNodeWorktreeRunner } from "../worktrees/nodeWorktreeRunner.js";
 import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js";
@@ -24,6 +28,7 @@ export interface CreateAppOptions {
   materializeWorktrees?: boolean;
   worktreeRunner?: MaterializeWorktreeRunner;
   workerAdapter?: WorkerAdapter;
+  workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
 }
 
 function requestBody(body: unknown): Record<string, unknown> {
@@ -226,6 +231,22 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.get("/api/dashboard", async () => store.dashboard());
 
   app.get("/api/recovery", async () => buildStewardRecoveryReport(await store.dashboard()));
+
+  app.post("/api/recovery/reconcile", async () => {
+    const dashboard = await store.dashboard();
+    const localDashboard: DashboardData = {
+      ...dashboard,
+      workerSessions: dashboard.workerSessions.filter((session) => session.hostId === null || session.hostId === "local")
+    };
+
+    return reconcileWorkerSessions({
+      dashboard: localDashboard,
+      probeProcess: options.workerProcessProbe ?? probeLocalWorkerProcess,
+      updateWorkerSessionStatus(input) {
+        return store.updateWorkerSessionStatus(input);
+      }
+    });
+  });
 
   app.post("/api/goals", async (request) => {
     const body = requestBody(request.body);

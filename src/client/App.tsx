@@ -1,5 +1,5 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import type { ExecutionNode, StewardDecision } from "../shared/types.js";
+import type { ExecutionNode, StewardDecision, WorkerSession } from "../shared/types.js";
 import {
   type ClientDashboardData,
   correctDecision,
@@ -25,6 +25,20 @@ const emptyDashboard: ClientDashboardData = {
   events: []
 };
 
+const ownerHomePath = "/Users/yewang";
+
+function displayPath(path: string): string {
+  if (path === ownerHomePath) {
+    return "~";
+  }
+
+  if (path.startsWith(`${ownerHomePath}/`)) {
+    return `~/${path.slice(ownerHomePath.length + 1)}`;
+  }
+
+  return path;
+}
+
 function actions(decision: StewardDecision): string[] {
   try {
     return JSON.parse(decision.actionsJson) as string[];
@@ -39,6 +53,10 @@ function resumeCommand(command: string, resumeId: string): string {
 
 function formatEventTime(timestamp: string): string {
   return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, " UTC").replace(/Z$/, " UTC");
+}
+
+function isVisibleWorkerSession(session: WorkerSession): boolean {
+  return session.status === "starting" || session.status === "running" || session.status === "paused";
 }
 
 export function App() {
@@ -69,6 +87,17 @@ export function App() {
   );
   const remoteNodes = useMemo(() => dashboard.executionNodes.filter((node) => node.kind === "remote"), [dashboard.executionNodes]);
   const recentEvents = useMemo(() => [...dashboard.events].slice(-8).reverse(), [dashboard.events]);
+  const visibleWorkerSessions = useMemo(
+    () => dashboard.workerSessions.filter((session) => isVisibleWorkerSession(session)),
+    [dashboard.workerSessions]
+  );
+  const historicalWorkerSessions = useMemo(
+    () =>
+      dashboard.workerSessions
+        .filter((session) => !isVisibleWorkerSession(session))
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+    [dashboard.workerSessions]
+  );
   const memoryCount = dashboard.memories.length;
   const goalCount = dashboard.goals.length;
   const workerCount = dashboard.workerSessions.length;
@@ -240,7 +269,7 @@ export function App() {
             <input
               aria-label="Target directory"
               onChange={(event) => setWorkspacePath(event.target.value)}
-              placeholder="/Users/yewang/code/project/target"
+              placeholder="~/code/project/target"
               required
               type="text"
               value={workspacePath}
@@ -276,7 +305,7 @@ export function App() {
                   <div className="message-meta">
                     <span>{message.role}</span>
                     {message.projectName ? <span>{message.projectName}</span> : null}
-                    {message.workspacePath ? <code>{message.workspacePath}</code> : null}
+                    {message.workspacePath ? <code>{displayPath(message.workspacePath)}</code> : null}
                     <time dateTime={message.createdAt}>{formatEventTime(message.createdAt)}</time>
                   </div>
                   <p>{message.body}</p>
@@ -312,7 +341,7 @@ export function App() {
                       <dl className="resource-facts compact-facts">
                         <div>
                           <dt>target</dt>
-                          <dd>{goal.workspacePath}</dd>
+                          <dd>{displayPath(goal.workspacePath)}</dd>
                         </div>
                       </dl>
                     ) : null}
@@ -382,32 +411,57 @@ export function App() {
           </div>
         </section>
 
-        <section className="panel worker-panel">
+        <section aria-labelledby="worker-sessions-heading" className="panel worker-panel">
           <div className="panel-heading">
             <p className="eyebrow">Execution</p>
-            <h2>Worker Sessions</h2>
+            <h2 id="worker-sessions-heading">Worker Sessions</h2>
           </div>
           <div className="item-list scroll-list compact-list">
             {dashboard.workerSessions.length === 0 ? (
               <p className="empty-copy">No Worker Agent sessions yet.</p>
             ) : (
-              dashboard.workerSessions.map((session) => (
-                <article className="item-row worker-row compact-row" key={session.id}>
-                  <div>
-                    <h3>
-                      {session.kind} <span>{session.command}</span>
-                    </h3>
-                    <p>{session.cwd}</p>
-                    <div className="row-meta">
-                      {session.pid ? <span>pid {session.pid}</span> : null}
-                      {session.resumeId ? <span>resume {session.resumeId}</span> : null}
+              <>
+                {visibleWorkerSessions.length === 0 ? <p className="empty-copy">No active Worker Agent sessions.</p> : null}
+                {visibleWorkerSessions.map((session) => (
+                  <article className="item-row worker-row compact-row" key={session.id}>
+                    <div>
+                      <h3>
+                        {session.kind} <span>{session.command}</span>
+                      </h3>
+                      <p>{displayPath(session.cwd)}</p>
+                      <div className="row-meta">
+                        {session.pid ? <span>pid {session.pid}</span> : null}
+                        {session.resumeId ? <span>resume {session.resumeId}</span> : null}
+                      </div>
+                      {session.resumeId ? <code className="copy-command">{resumeCommand(session.command, session.resumeId)}</code> : null}
                     </div>
-                    {session.resumeId ? <code className="copy-command">{resumeCommand(session.command, session.resumeId)}</code> : null}
-                    {session.status === "failed" && session.lastOutput ? <p>{session.lastOutput}</p> : null}
-                  </div>
-                  <span className={`pill status-${session.status}`}>{session.status}</span>
-                </article>
-              ))
+                    <span className={`pill status-${session.status}`}>{session.status}</span>
+                  </article>
+                ))}
+                {historicalWorkerSessions.length > 0 ? (
+                  <details aria-label="Historical Worker sessions" className="worker-history">
+                    <summary>
+                      <span>History</span>
+                      <strong>{historicalWorkerSessions.length} historical sessions</strong>
+                    </summary>
+                    <div className="worker-history-list">
+                      {historicalWorkerSessions.map((session) => (
+                        <article className="worker-history-row" key={session.id}>
+                          <div className="worker-history-main">
+                            <h3>{session.kind}</h3>
+                            <p>{displayPath(session.cwd)}</p>
+                            {session.lastOutput ? <pre>{session.lastOutput}</pre> : null}
+                          </div>
+                          <div className="worker-history-meta">
+                            <span className={`pill status-${session.status}`}>{session.status}</span>
+                            {session.resumeId ? <span>resume {session.resumeId}</span> : null}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </details>
+                ) : null}
+              </>
             )}
           </div>
         </section>
@@ -433,11 +487,11 @@ export function App() {
                         <dl className="resource-facts">
                           <div>
                             <dt>path</dt>
-                            <dd>{assignment.worktreePath}</dd>
+                            <dd>{displayPath(assignment.worktreePath)}</dd>
                           </div>
                           <div>
                             <dt>repo</dt>
-                            <dd>{assignment.repositoryPath}</dd>
+                            <dd>{displayPath(assignment.repositoryPath)}</dd>
                           </div>
                         </dl>
                       </div>
@@ -561,7 +615,7 @@ export function App() {
                       ) : null}
                       <div>
                         <dt>root</dt>
-                        <dd>{node.workRoot}</dd>
+                        <dd>{displayPath(node.workRoot)}</dd>
                       </div>
                     </dl>
                   </div>

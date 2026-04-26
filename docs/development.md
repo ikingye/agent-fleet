@@ -14,7 +14,7 @@ npm ci
 ## Run
 
 ```sh
-cd /Users/yewang/code/project/agent-fleet
+cd ~/code/project/agent-fleet
 npm run dev
 ```
 
@@ -44,7 +44,7 @@ For community metadata only, run:
 npm run check:community
 ```
 
-At the current refresh point, agent-fleet had passed `npm run check` and `npm run build`; `/Users/yewang/code/project/mahjong` had passed `npm test`, `npm run check`, and `npm run build`.
+At the current refresh point, agent-fleet had passed `npm run check` and `npm run build`; `~/code/project/mahjong` had passed `npm test`, `npm run check`, and `npm run build`.
 
 ## Testing
 

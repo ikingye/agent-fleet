@@ -25,12 +25,12 @@ AGENT_FLEET_WORKER_ARGS="exec --json --sandbox workspace-write -"
 
 `codexyoloproxy` is mainly for interactive terminal use and can fail for API-launched Workers with `stdin is not a terminal`.
 
-Do not use Worker cwd as the project selector. Each goal must include a target `workspacePath`, shown in the dashboard as Target directory. For normal product work, set that path to the business project workspace, such as `/Users/yewang/code/project/mahjong`. Use the agent-fleet workspace only when the owner explicitly asks to change the control plane itself.
+Do not use Worker cwd as the project selector. Each goal must include a target `workspacePath`, shown in the dashboard as Target directory. For normal product work, set that path to the business project workspace, such as `~/code/project/mahjong`. Use the agent-fleet workspace only when the owner explicitly asks to change the control plane itself.
 
 ## 3. Start The App
 
 ```sh
-cd /Users/yewang/code/project/agent-fleet
+cd ~/code/project/agent-fleet
 npm run dev
 ```
 

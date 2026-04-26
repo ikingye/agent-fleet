@@ -12,6 +12,16 @@ describe("buildResumeCommand", () => {
     ).toBe("codexyoloproxy resume resume-42");
   });
 
+  it("inserts Codex exec resume before the stdin prompt placeholder", () => {
+    expect(
+      buildResumeCommand({
+        kind: "codex",
+        baseCommand: "codex exec --json --sandbox workspace-write -",
+        resumeId: "abc"
+      })
+    ).toBe("codex exec --json --sandbox workspace-write resume abc");
+  });
+
   it("returns null when there is no resume id", () => {
     expect(
       buildResumeCommand({

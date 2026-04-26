@@ -440,6 +440,91 @@ describe("API routes", () => {
     }
   });
 
+  it("reconciles stale local Worker sessions without killing processes", async () => {
+    let starts = 0;
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codexyoloproxy",
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      workerAdapter: {
+        kind: "codex",
+        async start(input) {
+          starts += 1;
+
+          return {
+            command: starts === 1 ? "codex exec --json --sandbox workspace-write -" : "codexyoloproxy",
+            cwd: input.cwd,
+            resumeId: starts === 1 ? "resume-reconcile" : null,
+            pid: starts === 1 ? 4242 : 4343,
+            status: "running",
+            initialOutput: "Worker started"
+          };
+        }
+      },
+      async workerProcessProbe(session) {
+        return {
+          status: "missing",
+          message: `pid ${session.pid} is no longer running`
+        };
+      }
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Resume stale Worker",
+          body: "Recover a resumable Worker session."
+        }
+      });
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Fail stale Worker",
+          body: "Recover a non-resumable Worker session."
+        }
+      });
+
+      const reconcileResponse = await app.inject({
+        method: "POST",
+        url: "/api/recovery/reconcile"
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(reconcileResponse.statusCode).toBe(200);
+      expect(reconcileResponse.json()).toEqual({
+        checked: 2,
+        updated: 2,
+        staleSessionIds: [dashboard.workerSessions[0].id, dashboard.workerSessions[1].id],
+        runningSessionIds: []
+      });
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        status: "paused",
+        resumeId: "resume-reconcile",
+        lastOutput: "pid 4242 is no longer running"
+      });
+      expect(dashboard.workerSessions[1]).toMatchObject({
+        status: "failed",
+        resumeId: null,
+        lastOutput: "pid 4343 is no longer running"
+      });
+
+      const recovery = (await app.inject({ method: "GET", url: "/api/recovery" })).json();
+      expect(recovery.activeWorkerSessions[0]).toMatchObject({
+        status: "paused",
+        resumeCommand: "codex exec --json --sandbox workspace-write resume resume-reconcile"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects invalid Steward checkpoint payloads", async () => {
     const app = await createApp({
       statePath: join(dir, "state.json"),
