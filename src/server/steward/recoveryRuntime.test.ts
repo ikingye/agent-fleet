@@ -44,6 +44,10 @@ function dashboard(overrides: Partial<DashboardData>): DashboardData {
     executionNodes: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
+    stewardMessages: [],
+    agentArtifacts: [],
+    reviews: [],
+    deliveryReports: [],
     events: [],
     ...overrides
   };
@@ -57,6 +61,7 @@ describe("buildStewardRecoveryReport", () => {
           {
             id: "goal-1",
             projectName: "agent-fleet",
+            workspacePath: "/projects/agent-fleet",
             title: "Recover Steward context",
             body: "Make the Steward Agent restartable.",
             status: "running",
@@ -121,6 +126,51 @@ describe("buildStewardRecoveryReport", () => {
     ]);
   });
 
+  it("includes recent Steward messages in recovery context and next actions", () => {
+    const report = buildStewardRecoveryReport(
+      dashboard({
+        stewardMessages: [
+          {
+            id: "message-old",
+            role: "owner",
+            projectName: "mahjong",
+            workspacePath: "/projects/mahjong",
+            goalId: null,
+            body: "Old context",
+            createdAt: "2026-04-26T00:00:00.000Z"
+          },
+          {
+            id: "message-owner",
+            role: "owner",
+            projectName: "mahjong",
+            workspacePath: "/projects/mahjong",
+            goalId: "goal-1",
+            body: "After restart, remind me what the Worker Agent was doing.",
+            createdAt: "2026-04-26T00:03:00.000Z"
+          },
+          {
+            id: "message-steward",
+            role: "steward",
+            projectName: "mahjong",
+            workspacePath: "/projects/mahjong",
+            goalId: "goal-1",
+            body: "The active goal is to fix tile rendering in /projects/mahjong.",
+            createdAt: "2026-04-26T00:04:00.000Z"
+          }
+        ]
+      }),
+      "2026-04-26T00:05:00.000Z"
+    );
+
+    expect(report.recentStewardMessages.map((message) => message.id)).toEqual([
+      "message-owner",
+      "message-steward"
+    ]);
+    expect(report.nextActions).toContain(
+      "Recent Steward chat is available; review the latest owner/steward messages before dispatching more Worker Agents."
+    );
+  });
+
   it("returns an explicit no-active-worker action when recovery has no resumable Worker sessions", () => {
     const report = buildStewardRecoveryReport(
       dashboard({
@@ -128,6 +178,7 @@ describe("buildStewardRecoveryReport", () => {
           {
             id: "goal-blocked",
             projectName: "agent-fleet",
+            workspacePath: "/projects/agent-fleet",
             title: "Recover Steward context",
             body: "Make the Steward Agent restartable.",
             status: "blocked",

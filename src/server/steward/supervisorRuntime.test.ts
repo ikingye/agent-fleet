@@ -31,6 +31,9 @@ function dashboardWith(workerSessions: WorkerSession[]): DashboardData {
     executionNodes: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
+    agentArtifacts: [],
+    reviews: [],
+    deliveryReports: [],
     events: []
   };
 }

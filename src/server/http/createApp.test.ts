@@ -46,6 +46,7 @@ describe("API routes", () => {
         url: "/api/goals",
         payload: {
           projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
           title: "Bootstrap agent-fleet",
           body: "Build a Steward Agent control plane."
         }
@@ -64,15 +65,203 @@ describe("API routes", () => {
       });
       expect(dashboard.workerSessions[0]).toMatchObject({
         command: "codexyoloproxy",
+        cwd: "/projects/agent-fleet",
         status: "running"
       });
       expect(dashboard.worktreeAssignments[0]).toMatchObject({
         workerSessionId: dashboard.workerSessions[0].id,
-        repositoryPath: "/repo/agent-fleet",
+        repositoryPath: "/projects/agent-fleet",
         worktreePath: `/repo/agent-fleet/.worktrees/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
         branchName: `agent-fleet/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
         status: "planned"
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("passes configured Worker args to the command adapter", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: process.execPath,
+      workerArgs: [
+        "-e",
+        [
+          "if (process.argv[1] !== 'configured arg') {",
+          "  console.error(`unexpected arg: ${process.argv[1]}`);",
+          "  process.exit(1);",
+          "}",
+          "process.stdin.resume();",
+          "process.stdin.on('end', () => console.log('resume id: configured-worker-args'));"
+        ].join(" "),
+        "configured arg"
+      ],
+      defaultWorkerCwd: "/worktrees/agent-fleet"
+    });
+
+    try {
+      const goalResponse = await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: dir,
+          title: "Configure Worker args",
+          body: "Launch Codex non-interactively."
+        }
+      });
+
+      expect(goalResponse.statusCode).toBe(200);
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        command: expect.stringContaining("configured arg"),
+        cwd: dir,
+        resumeId: "configured-worker-args",
+        status: "completed"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("requires workspacePath when accepting a new goal", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const goalResponse = await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          title: "Bootstrap agent-fleet",
+          body: "Build a Steward Agent control plane."
+        }
+      });
+
+      expect(goalResponse.statusCode).toBe(400);
+      expect(goalResponse.json()).toMatchObject({
+        error: "Bad Request",
+        message: "workspacePath must be a non-empty string"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records owner Steward chat messages and persists deterministic Steward responses", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          title: "Fix tile rendering",
+          body: "Investigate the current UI bug."
+        }
+      });
+
+      const messageResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward/messages",
+        payload: {
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          body: "What is the current recovery state?"
+        }
+      });
+
+      expect(messageResponse.statusCode).toBe(200);
+      expect(messageResponse.json().ownerMessage).toMatchObject({
+        role: "owner",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        body: "What is the current recovery state?"
+      });
+      expect(messageResponse.json().stewardMessage).toMatchObject({
+        role: "steward",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong"
+      });
+      expect(messageResponse.json().stewardMessage.body).toContain("/Users/yewang/code/project/mahjong");
+      expect(messageResponse.json().stewardMessage.body).toContain("1 active goal");
+
+      const listResponse = await app.inject({
+        method: "GET",
+        url: "/api/steward/messages?workspacePath=%2FUsers%2Fyewang%2Fcode%2Fproject%2Fmahjong"
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(listResponse.statusCode).toBe(200);
+      expect(listResponse.json().messages).toHaveLength(2);
+      expect(dashboard.stewardMessages).toHaveLength(2);
+      expect(dashboard.stewardMessages.map((message: { role: string }) => message.role)).toEqual(["owner", "steward"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("surfaces missing codexyoloproxy as a failed Worker session", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      defaultWorkerCwd: process.cwd(),
+      defaultRepositoryPath: "/repo/agent-fleet",
+      worktreeRoot: "/repo/agent-fleet/.worktrees",
+      workerAdapter: {
+        kind: "codex",
+        async start(input) {
+          return {
+            command: "codexyoloproxy",
+            cwd: input.cwd,
+            resumeId: null,
+            pid: null,
+            status: "failed",
+            initialOutput: "Worker command not found: codexyoloproxy"
+          };
+        }
+      }
+    });
+
+    try {
+      const goalResponse = await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Verify command availability",
+          body: "Surface missing codexyoloproxy honestly."
+        }
+      });
+
+      expect(goalResponse.statusCode).toBe(200);
+      expect(goalResponse.json()).toMatchObject({ status: "blocked" });
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const eventTypes = dashboard.events.map((event: { type: string }) => event.type);
+
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        command: "codexyoloproxy",
+        status: "failed",
+        pid: null,
+        resumeId: null,
+        lastOutput: "Worker command not found: codexyoloproxy"
+      });
+      expect(eventTypes).toContain("worker.failed");
+      expect(eventTypes).not.toContain("worker.started");
+      expect(dashboard.stewardCheckpoints[0].nextAction).toContain(
+        "Worker command not found: codexyoloproxy"
+      );
     } finally {
       await app.close();
     }
@@ -92,6 +281,7 @@ describe("API routes", () => {
         url: "/api/goals",
         payload: {
           projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
           title: "Bootstrap agent-fleet",
           body: "Build a Steward Agent control plane."
         }
@@ -136,6 +326,7 @@ describe("API routes", () => {
         url: "/api/goals",
         payload: {
           projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
           title: "Supervise Worker sessions",
           body: "Keep Worker lifecycle status durable."
         }
@@ -189,6 +380,7 @@ describe("API routes", () => {
         url: "/api/goals",
         payload: {
           projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
           title: "Recover Steward context",
           body: "Make compact failures recoverable from durable state."
         }
@@ -229,6 +421,7 @@ describe("API routes", () => {
       expect(recovery.activeGoals[0]).toMatchObject({
         id: goalId,
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Recover Steward context",
         status: "running"
       });
@@ -237,7 +430,7 @@ describe("API routes", () => {
         resumeId: "resume-api-test",
         resumeCommand: "codexyoloproxy resume resume-api-test",
         worktreeAssignmentId: dashboard.worktreeAssignments[0].id,
-        repositoryPath: "/repo/agent-fleet",
+        repositoryPath: "/projects/agent-fleet",
         worktreeStatus: "planned",
         worktreePath: `/repo/agent-fleet/.worktrees/${workerSessionId}-recover-steward-context`
       });
@@ -290,6 +483,7 @@ describe("API routes", () => {
         url: "/api/goals",
         payload: {
           projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
           title: "Validate lifecycle updates",
           body: "Reject unknown Worker status values."
         }

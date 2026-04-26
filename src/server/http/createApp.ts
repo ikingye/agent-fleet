@@ -1,18 +1,23 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import { join } from "node:path";
-import type { ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
+import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
 import { StewardRuntime } from "../steward/stewardRuntime.js";
 import { createNodeWorktreeRunner } from "../worktrees/nodeWorktreeRunner.js";
 import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js";
-import { CommandWorkerAdapter, type WorkerAdapter } from "../workers/commandWorkerAdapter.js";
+import {
+  CommandWorkerAdapter,
+  parseWorkerCommandArgs,
+  type WorkerAdapter
+} from "../workers/commandWorkerAdapter.js";
 
 export interface CreateAppOptions {
   statePath?: string;
   workerCommand?: string;
+  workerArgs?: string[];
   defaultWorkerCwd?: string;
   defaultRepositoryPath?: string;
   worktreeRoot?: string;
@@ -147,10 +152,55 @@ function defaultStatePath(): string {
   return join(process.cwd(), ".agent-fleet", "control-plane.json");
 }
 
+function buildDeterministicStewardResponse(
+  dashboard: DashboardData,
+  projectName: string | null,
+  workspacePath: string | null
+): string {
+  const activeGoals = dashboard.goals.filter((goal) => {
+    if (goal.status !== "queued" && goal.status !== "running" && goal.status !== "blocked") {
+      return false;
+    }
+
+    if (projectName !== null && goal.projectName !== projectName) {
+      return false;
+    }
+
+    if (workspacePath !== null && goal.workspacePath !== workspacePath) {
+      return false;
+    }
+
+    return true;
+  });
+  const latestCheckpoint = [...dashboard.stewardCheckpoints].sort(
+    (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
+  )[0];
+  const pieces = [
+    workspacePath === null ? "No workspace is selected for this chat." : `Workspace: ${workspacePath}.`,
+    `I see ${activeGoals.length} active ${activeGoals.length === 1 ? "goal" : "goals"}${
+      projectName === null ? "" : ` for ${projectName}`
+    }.`
+  ];
+
+  if (activeGoals.length > 0) {
+    pieces.push(`Current active goal: ${activeGoals[0].title} (${activeGoals[0].status}).`);
+  }
+
+  if (latestCheckpoint !== undefined) {
+    pieces.push(`Recovery next action: ${latestCheckpoint.nextAction}`);
+  } else {
+    pieces.push("Recovery next action: no checkpoint yet; use dashboard state before dispatching more Worker Agents.");
+  }
+
+  return pieces.join(" ");
+}
+
 export async function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const store = await JsonControlPlaneStore.open(options.statePath ?? defaultStatePath());
-  const workerAdapter = options.workerAdapter ?? new CommandWorkerAdapter(options.workerCommand ?? "codexyoloproxy");
+  const workerArgs = options.workerArgs ?? parseWorkerCommandArgs(process.env.AGENT_FLEET_WORKER_ARGS);
+  const workerAdapter =
+    options.workerAdapter ?? new CommandWorkerAdapter(options.workerCommand ?? "codexyoloproxy", workerArgs);
   const defaultRepositoryPath = options.defaultRepositoryPath ?? process.cwd();
   const materializeWorktrees = options.materializeWorktrees ?? process.env.AGENT_FLEET_MATERIALIZE_WORKTREES === "true";
   const steward = new StewardRuntime({
@@ -182,9 +232,89 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     return steward.acceptGoal({
       projectName: requireString(body.projectName, "projectName"),
+      workspacePath: requireString(body.workspacePath, "workspacePath"),
       title: requireString(body.title, "title"),
       body: requireString(body.body, "body")
     });
+  });
+
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof Error && error.message.includes("must be")) {
+      return reply.code(400).send({
+        error: "Bad Request",
+        message: error.message
+      });
+    }
+
+    throw error;
+  });
+
+  app.post("/api/steward/messages", async (request, reply) => {
+    const body = requestBody(request.body);
+
+    try {
+      const dashboard = await store.dashboard();
+      const goalId = optionalString(body.goalId, "goalId");
+      const goal = goalId === null ? null : dashboard.goals.find((item) => item.id === goalId);
+
+      if (goalId !== null && goal === undefined) {
+        return reply.code(404).send({
+          error: "Not Found",
+          message: `Goal not found: ${goalId}`
+        });
+      }
+
+      const projectName = goal?.projectName ?? optionalString(body.projectName, "projectName");
+      const workspacePath = goal?.workspacePath ?? optionalString(body.workspacePath, "workspacePath");
+      const ownerMessage = await store.recordStewardMessage({
+        role: "owner",
+        projectName,
+        workspacePath,
+        goalId,
+        body: requireString(body.body, "body")
+      });
+      const stewardDashboard = await store.dashboard();
+      const stewardMessage = await store.recordStewardMessage({
+        role: "steward",
+        projectName,
+        workspacePath,
+        goalId,
+        body: buildDeterministicStewardResponse(stewardDashboard, projectName, workspacePath)
+      });
+
+      return { ownerMessage, stewardMessage };
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.get("/api/steward/messages", async (request, reply) => {
+    const query = requestBody(request.query);
+
+    try {
+      const messages = await store.listStewardMessages({
+        projectName: optionalString(query.projectName, "projectName") ?? undefined,
+        workspacePath: optionalString(query.workspacePath, "workspacePath") ?? undefined
+      });
+
+      return { messages };
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
   });
 
   app.post("/api/decisions/:id/corrections", async (request) => {

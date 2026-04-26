@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,6 +13,7 @@ describe("JsonControlPlaneStore", () => {
       const store = await JsonControlPlaneStore.open(statePath);
       const goal = await store.createGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Bootstrap the control plane",
         body: "Build a Steward Agent that can coordinate Worker Agents overnight."
       });
@@ -63,7 +64,12 @@ describe("JsonControlPlaneStore", () => {
       const rawState = JSON.parse(await readFile(statePath, "utf8")) as { version: number };
 
       expect(rawState.version).toBe(1);
-      expect(dashboard.goals.map((item) => item.title)).toEqual(["Bootstrap the control plane"]);
+      expect(dashboard.goals).toEqual([
+        expect.objectContaining({
+          title: "Bootstrap the control plane",
+          workspacePath: "/projects/agent-fleet"
+        })
+      ]);
       expect(dashboard.decisions[0]).toMatchObject({
         id: decision.id,
         workerSessionId: null,
@@ -92,6 +98,93 @@ describe("JsonControlPlaneStore", () => {
       expect(dashboard.memories[0]).toMatchObject({
         key: "agent_vocabulary",
         value: "Use Steward Agent and Worker Agent."
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("persists Steward messages and exposes them on the dashboard", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const ownerMessage = await store.recordStewardMessage({
+        role: "owner",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        goalId: null,
+        body: "What is running for mahjong?"
+      });
+      const stewardMessage = await store.recordStewardMessage({
+        role: "steward",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        goalId: null,
+        body: "I do not see active goals for mahjong yet."
+      });
+
+      const reopened = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await reopened.dashboard();
+
+      expect(dashboard.stewardMessages).toEqual([
+        expect.objectContaining({
+          id: ownerMessage.id,
+          role: "owner",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          goalId: null,
+          body: "What is running for mahjong?"
+        }),
+        expect.objectContaining({
+          id: stewardMessage.id,
+          role: "steward",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          goalId: null,
+          body: "I do not see active goals for mahjong yet."
+        })
+      ]);
+      expect(await reopened.listStewardMessages({ workspacePath: "/Users/yewang/code/project/mahjong" })).toHaveLength(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("parses legacy goals without workspacePath using a deterministic fallback", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      await writeFile(
+        statePath,
+        JSON.stringify(
+          {
+            version: 1,
+            goals: [
+              {
+                id: "legacy-goal",
+                projectName: "Mahjong App",
+                title: "Legacy goal",
+                body: "This record predates workspacePath.",
+                status: "queued",
+                createdAt: "2026-04-26T00:00:00.000Z",
+                updatedAt: "2026-04-26T00:00:00.000Z"
+              }
+            ]
+          },
+          null,
+          2
+        )
+      );
+
+      const store = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await store.dashboard();
+
+      expect(dashboard.goals[0]).toMatchObject({
+        id: "legacy-goal",
+        workspacePath: "/legacy-agent-fleet-workspaces/mahjong-app"
       });
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -152,6 +245,7 @@ describe("JsonControlPlaneStore", () => {
       const store = await JsonControlPlaneStore.open(statePath);
       const goal = await store.createGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Supervise Worker sessions",
         body: "Keep Worker lifecycle status durable after restart."
       });
@@ -225,6 +319,7 @@ describe("JsonControlPlaneStore", () => {
       const store = await JsonControlPlaneStore.open(statePath);
       const goal = await store.createGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Recover Steward context",
         body: "Make the Steward Agent restartable after compact failures."
       });

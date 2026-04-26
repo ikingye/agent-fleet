@@ -2,6 +2,7 @@ import type {
   DashboardData,
   RecoveryWorkerSession,
   StewardCheckpoint,
+  StewardMessage,
   StewardRecoveryReport,
   WorkerSessionStatus
 } from "../../shared/types.js";
@@ -46,6 +47,7 @@ export function buildStewardRecoveryReport(
         updatedAt: session.updatedAt
       };
     });
+  const recentStewardMessages = latestStewardMessages(dashboard.stewardMessages ?? [], 2);
 
   return {
     generatedAt,
@@ -53,7 +55,8 @@ export function buildStewardRecoveryReport(
     activeGoalIds,
     activeGoals,
     activeWorkerSessions,
-    nextActions: buildNextActions(lastCheckpoint, activeWorkerSessions)
+    recentStewardMessages,
+    nextActions: buildNextActions(lastCheckpoint, activeWorkerSessions, recentStewardMessages)
   };
 }
 
@@ -71,7 +74,8 @@ function latestCheckpoint(checkpoints: StewardCheckpoint[]): StewardCheckpoint |
 
 function buildNextActions(
   lastCheckpoint: StewardCheckpoint | null,
-  activeWorkerSessions: RecoveryWorkerSession[]
+  activeWorkerSessions: RecoveryWorkerSession[],
+  recentStewardMessages: StewardMessage[]
 ): string[] {
   const actions: string[] = [];
 
@@ -103,5 +107,17 @@ function buildNextActions(
     );
   }
 
+  if (recentStewardMessages.length > 0) {
+    actions.push(
+      "Recent Steward chat is available; review the latest owner/steward messages before dispatching more Worker Agents."
+    );
+  }
+
   return actions;
+}
+
+function latestStewardMessages(messages: StewardMessage[], limit: number): StewardMessage[] {
+  return [...messages]
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt))
+    .slice(-limit);
 }

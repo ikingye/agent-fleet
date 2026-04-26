@@ -4,6 +4,8 @@ import { access } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import type { WorkerKind, WorkerSessionStatus } from "../../shared/types.js";
 
+const ZSH_ALIAS_LOOKUP_TIMEOUT_MS = 2500;
+
 export interface WorkerStartInput {
   goalTitle: string;
   prompt: string;
@@ -24,17 +26,76 @@ export interface WorkerAdapter {
   start(input: WorkerStartInput): Promise<WorkerStartResult>;
 }
 
+export function parseWorkerCommandArgs(value: string | undefined): string[] {
+  if (value === undefined || value.trim() === "") {
+    return [];
+  }
+
+  const args: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+
+  for (const character of value) {
+    if (escaping) {
+      current += character;
+      escaping = false;
+      continue;
+    }
+
+    if (character === "\\" && quote !== "'") {
+      escaping = true;
+      continue;
+    }
+
+    if ((character === "'" || character === '"') && quote === null) {
+      quote = character;
+      continue;
+    }
+
+    if (character === quote) {
+      quote = null;
+      continue;
+    }
+
+    if (/\s/.test(character) && quote === null) {
+      if (current !== "") {
+        args.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (escaping) {
+    current += "\\";
+  }
+
+  if (quote !== null) {
+    throw new Error("AGENT_FLEET_WORKER_ARGS contains an unterminated quoted argument");
+  }
+
+  if (current !== "") {
+    args.push(current);
+  }
+
+  return args;
+}
+
 export class CommandWorkerAdapter implements WorkerAdapter {
   readonly kind: WorkerKind = "codex";
 
   constructor(
     private readonly command: string,
     private readonly args: string[] = [],
-    private readonly startupTimeoutMs = 1500
+    private readonly startupTimeoutMs = 1500,
+    private readonly env: NodeJS.ProcessEnv = process.env
   ) {}
 
   async start(input: WorkerStartInput): Promise<WorkerStartResult> {
-    const resolution = await resolveCommand(this.command, this.args);
+    const resolution = await resolveCommand(this.command, this.args, this.env);
 
     if (resolution === null) {
       return {
@@ -53,7 +114,8 @@ export class CommandWorkerAdapter implements WorkerAdapter {
       displayCommand: resolution.displayCommand,
       cwd: input.cwd,
       prompt: input.prompt,
-      startupTimeoutMs: this.startupTimeoutMs
+      startupTimeoutMs: this.startupTimeoutMs,
+      env: this.env
     });
   }
 }
@@ -65,6 +127,7 @@ interface StartWorkerProcessInput {
   cwd: string;
   prompt: string;
   startupTimeoutMs: number;
+  env: NodeJS.ProcessEnv;
 }
 
 interface ResolvedCommand {
@@ -83,7 +146,7 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
   return new Promise((resolve) => {
     const child = spawn(input.command, input.args, {
       cwd: input.cwd,
-      env: process.env,
+      env: input.env,
       stdio: ["pipe", "pipe", "pipe"]
     });
     let output = "";
@@ -133,8 +196,8 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
   });
 }
 
-async function resolveCommand(command: string, args: string[]): Promise<ResolvedCommand | null> {
-  if (await isCommandAvailable(command)) {
+async function resolveCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<ResolvedCommand | null> {
+  if (await isCommandAvailable(command, env)) {
     return {
       command,
       args,
@@ -142,7 +205,7 @@ async function resolveCommand(command: string, args: string[]): Promise<Resolved
     };
   }
 
-  if (await isZshAliasAvailable(command)) {
+  if (await isZshAliasAvailable(command, env)) {
     return {
       command: "zsh",
       args: ["-ic", [command, ...args.map(shellQuote)].join(" ")],
@@ -161,7 +224,7 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-async function isZshAliasAvailable(command: string): Promise<boolean> {
+async function isZshAliasAvailable(command: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   if (!isSafeAliasName(command)) {
     return false;
   }
@@ -169,7 +232,7 @@ async function isZshAliasAvailable(command: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const child = spawn("zsh", ["-ic", `alias ${command}`], {
-      env: process.env,
+      env,
       stdio: ["ignore", "ignore", "ignore"]
     });
     const settle = (available: boolean) => {
@@ -184,7 +247,7 @@ async function isZshAliasAvailable(command: string): Promise<boolean> {
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       settle(false);
-    }, 1000);
+    }, ZSH_ALIAS_LOOKUP_TIMEOUT_MS);
 
     child.on("error", () => {
       settle(false);
@@ -204,12 +267,12 @@ async function isExecutable(path: string): Promise<boolean> {
   }
 }
 
-async function isCommandAvailable(command: string): Promise<boolean> {
+async function isCommandAvailable(command: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   if (command.includes("/")) {
     return isExecutable(command);
   }
 
-  const paths = process.env.PATH?.split(delimiter) ?? [];
+  const paths = env.PATH?.split(delimiter) ?? [];
 
   for (const path of paths) {
     if (await isExecutable(join(path, command))) {

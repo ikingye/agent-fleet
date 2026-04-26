@@ -5,10 +5,16 @@ export type DecisionRisk = "low" | "medium" | "high";
 export type DecisionStatus = "active" | "corrected" | "superseded";
 export type MemoryScope = "user" | "project";
 export type StewardCheckpointReason = "dispatch" | "correction" | "recovery" | "crash" | "manual";
+export type AgentRole = "researcher" | "planner" | "worker" | "reviewer" | "deliverer";
+export type ArtifactKind = "research" | "plan" | "worker_output" | "review" | "delivery";
+export type ReviewStatus = "passed" | "failed" | "needs_attention";
+export type DeliveryStatus = "delivered" | "failed";
+export type StewardMessageRole = "owner" | "steward" | "worker" | "system";
 
 export interface Goal {
   id: string;
   projectName: string;
+  workspacePath?: string;
   title: string;
   body: string;
   status: GoalStatus;
@@ -110,6 +116,51 @@ export interface ControlPlaneEvent {
   createdAt: string;
 }
 
+export interface AgentArtifact {
+  id: string;
+  goalId: string;
+  role: AgentRole;
+  kind: ArtifactKind;
+  title: string;
+  path: string;
+  content: string;
+  resourceId: string | null;
+  createdAt: string;
+}
+
+export interface ReviewResult {
+  id: string;
+  goalId: string;
+  reviewer: string;
+  status: ReviewStatus;
+  summary: string;
+  artifactIds: string[];
+  resourceId: string | null;
+  createdAt: string;
+}
+
+export interface DeliveryReport {
+  id: string;
+  goalId: string;
+  status: DeliveryStatus;
+  markdown: string;
+  artifactIds: string[];
+  reviewResultIds: string[];
+  resourceId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StewardMessage {
+  id: string;
+  role: StewardMessageRole;
+  projectName: string | null;
+  workspacePath: string | null;
+  goalId: string | null;
+  body: string;
+  createdAt: string;
+}
+
 export interface RecoveryWorkerSession {
   id: string;
   goalId: string;
@@ -136,6 +187,7 @@ export interface StewardRecoveryReport {
   activeGoalIds: string[];
   activeGoals: Goal[];
   activeWorkerSessions: RecoveryWorkerSession[];
+  recentStewardMessages: StewardMessage[];
   nextActions: string[];
 }
 
@@ -148,5 +200,9 @@ export interface DashboardData {
   executionNodes: ExecutionNode[];
   worktreeAssignments: WorktreeAssignment[];
   stewardCheckpoints: StewardCheckpoint[];
+  stewardMessages?: StewardMessage[];
+  agentArtifacts: AgentArtifact[];
+  reviews: ReviewResult[];
+  deliveryReports: DeliveryReport[];
   events: ControlPlaneEvent[];
 }

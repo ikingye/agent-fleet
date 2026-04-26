@@ -21,6 +21,7 @@ export interface StewardRuntimeOptions {
 
 export interface AcceptGoalInput {
   projectName: string;
+  workspacePath: string;
   title: string;
   body: string;
 }
@@ -51,10 +52,10 @@ export class StewardRuntime {
         "Track resume metadata for recovery"
       ]
     });
-    const repositoryPath = this.options.defaultRepositoryPath ?? process.cwd();
+    const repositoryPath = input.workspacePath;
     const worktreeRoot = this.options.worktreeRoot ?? join(repositoryPath, ".worktrees");
     let plannedWorktree: PlannedWorktree | null = null;
-    let workerCwd = this.options.defaultWorkerCwd;
+    let workerCwd = input.workspacePath;
 
     if (this.options.worktreeRunner !== undefined) {
       plannedWorktree = planWorktree({
@@ -106,7 +107,14 @@ export class StewardRuntime {
     await this.options.store.recordStewardCheckpoint({
       reason: "dispatch",
       summary: `Worker session ${session.id} recorded for goal: ${goal.title}`,
-      nextAction: buildDispatchNextAction(session.id, session.kind, workerResult.command, workerResult.resumeId),
+      nextAction: buildDispatchNextAction(
+        session.id,
+        session.kind,
+        workerResult.command,
+        workerResult.resumeId,
+        workerResult.status,
+        workerResult.initialOutput
+      ),
       goalIds: [goal.id],
       workerSessionIds: [session.id]
     });
@@ -183,8 +191,20 @@ function buildDispatchNextAction(
   workerSessionId: string,
   kind: WorkerAdapter["kind"],
   command: string,
-  resumeId: string | null
+  resumeId: string | null,
+  status: "running" | "completed" | "failed",
+  initialOutput: string
 ): string {
+  if (status === "failed") {
+    const output = summarizeWorkerOutput(initialOutput);
+
+    if (output === "") {
+      return `Review failed Worker session ${workerSessionId}; ${command} did not start.`;
+    }
+
+    return `Review failed Worker session ${workerSessionId}; ${output}`;
+  }
+
   const resumeCommand = buildResumeCommand({
     kind,
     baseCommand: command,
@@ -196,4 +216,14 @@ function buildDispatchNextAction(
   }
 
   return `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted.`;
+}
+
+function summarizeWorkerOutput(output: string): string {
+  const oneLine = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join(" ");
+
+  return oneLine.length > 240 ? `${oneLine.slice(0, 237)}...` : oneLine;
 }

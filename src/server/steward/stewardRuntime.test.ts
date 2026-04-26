@@ -34,13 +34,12 @@ describe("StewardRuntime", () => {
       const runtime = new StewardRuntime({
         store,
         workerAdapter: new FakeWorkerAdapter(),
-        defaultWorkerCwd: "/worktrees/agent-fleet",
-        defaultRepositoryPath: "/repo/agent-fleet",
-        worktreeRoot: "/repo/agent-fleet/.worktrees"
+        defaultWorkerCwd: "/worktrees/agent-fleet"
       });
 
       const goal = await runtime.acceptGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Bootstrap agent-fleet",
         body: "Build the first Steward/Worker loop."
       });
@@ -61,13 +60,14 @@ describe("StewardRuntime", () => {
         decisionId: dashboard.decisions[0].id,
         kind: "codex",
         command: "codexyoloproxy",
+        cwd: "/projects/agent-fleet",
         resumeId: "resume-bootstrap-agent-fleet",
         status: "running"
       });
       expect(dashboard.worktreeAssignments[0]).toMatchObject({
         workerSessionId: dashboard.workerSessions[0].id,
-        repositoryPath: "/repo/agent-fleet",
-        worktreePath: `/repo/agent-fleet/.worktrees/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
+        repositoryPath: "/projects/agent-fleet",
+        worktreePath: `/projects/agent-fleet/.worktrees/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
         branchName: `agent-fleet/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
         status: "planned"
       });
@@ -102,6 +102,7 @@ describe("StewardRuntime", () => {
       });
       await runtime.acceptGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Bootstrap agent-fleet",
         body: "Build the first Steward/Worker loop."
       });
@@ -159,6 +160,7 @@ describe("StewardRuntime", () => {
 
       const goal = await runtime.acceptGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Bootstrap agent-fleet",
         body: "Build the first Steward/Worker loop."
       });
@@ -200,6 +202,7 @@ describe("StewardRuntime", () => {
 
       const goal = await runtime.acceptGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Bootstrap agent-fleet",
         body: "Build the first Steward/Worker loop."
       });
@@ -245,6 +248,7 @@ describe("StewardRuntime", () => {
 
       await runtime.acceptGoal({
         projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
         title: "Bootstrap agent-fleet",
         body: "Build the first Steward/Worker loop."
       });
@@ -255,7 +259,7 @@ describe("StewardRuntime", () => {
       expect(workerAdapter.startInputs[0].cwd).toBe(dashboard.worktreeAssignments[0].worktreePath);
       expect(dashboard.workerSessions[0].cwd).toBe(dashboard.worktreeAssignments[0].worktreePath);
       expect(dashboard.worktreeAssignments[0]).toMatchObject({
-        repositoryPath: "/repo/agent-fleet",
+        repositoryPath: "/projects/agent-fleet",
         status: "planned"
       });
       expect(dashboard.worktreeAssignments[0].branchName).toContain("agent-fleet/");

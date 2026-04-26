@@ -1,6 +1,6 @@
 # Product Brief
 
-agent-fleet is a Steward Agent platform for coordinating coding agents across many projects, machines, terminals, worktrees, and long-running development sessions.
+agent-fleet is a Steward Agent control plane for coordinating coding agents across many projects, machines, terminals, worktrees, and long-running development sessions. It manages work; it is not a host for business project UI or product-specific code.
 
 The core problem is not how to run one coding agent. The core problem is that a human developer becomes the bottleneck when agent work requires constant project switching, terminal babysitting, resume-id tracking, stage-by-stage approvals, local CPU management, and repeated context handoff.
 
@@ -24,8 +24,16 @@ The long-term goal is a Steward Agent that keeps learning the human's preference
 
 - One human-facing agent: the Steward Agent is the only required human interaction surface.
 - Workers treat the Steward as the human: Codex, Claude, Gemini, and future adapters receive instructions from the Steward and report back to it.
+- Delegate execution: when the owner gives a new instruction, the Steward should usually assign a clearly named Worker task or update an existing relevant Worker instead of carrying all implementation context itself.
+- Compact Steward context: the Steward retains goals, decisions, active Worker ownership, blockers, and verification results while Workers handle code reading, implementation, review, and testing where practical.
+- Clear Worker identity: task names and reports should start with labels such as `Worker: compact-dashboard-ui`, not rely on random nicknames.
+- Continue until blocked or verified: the Steward should ask what remains after each subtask and move to the next Worker or verification step instead of stopping just because one Worker finished.
+- Compact control plane, not project host: agent-fleet manages projects; business project UI and product code stay in each target workspace.
+- Explicit workspace ownership: every user project goal has a `workspacePath`, and Worker cwd/project work happens there unless the owner explicitly targets agent-fleet itself.
+- Durable Steward Chat: owner and Steward messages are persisted as `stewardMessages` in `.agent-fleet/control-plane.json`.
 - Autonomy with accountability: the Steward may decide and continue, but must log important decisions and expose them for review.
 - Human correction is normal: decisions must be correctable after work has continued.
+- Multi-project visibility: status, corrections, important decisions, Worker sessions, checkpoints, and memory should be easy to review across projects.
 - Parallelism by default: use worktrees, clear ownership, and independent task scopes to increase throughput.
 - Local-first control, remote-capable execution: the developer controls the system locally while expensive work can move elsewhere.
 - Durable sessions: terminal lifecycle must not define project lifecycle.

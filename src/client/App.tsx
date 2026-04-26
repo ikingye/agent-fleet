@@ -1,8 +1,15 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import type { DashboardData, ExecutionNode, StewardDecision } from "../shared/types.js";
-import { correctDecision, createGoal, fetchDashboard, registerExecutionNode } from "./api.js";
+import type { ExecutionNode, StewardDecision } from "../shared/types.js";
+import {
+  type ClientDashboardData,
+  correctDecision,
+  createGoal,
+  fetchDashboard,
+  registerExecutionNode,
+  sendStewardMessage
+} from "./api.js";
 
-const emptyDashboard: DashboardData = {
+const emptyDashboard: ClientDashboardData = {
   goals: [],
   decisions: [],
   workerSessions: [],
@@ -11,6 +18,10 @@ const emptyDashboard: DashboardData = {
   executionNodes: [],
   worktreeAssignments: [],
   stewardCheckpoints: [],
+  agentArtifacts: [],
+  reviews: [],
+  deliveryReports: [],
+  stewardMessages: [],
   events: []
 };
 
@@ -31,10 +42,12 @@ function formatEventTime(timestamp: string): string {
 }
 
 export function App() {
-  const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard);
+  const [dashboard, setDashboard] = useState<ClientDashboardData>(emptyDashboard);
   const [projectName, setProjectName] = useState("");
+  const [workspacePath, setWorkspacePath] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalBody, setGoalBody] = useState("");
+  const [stewardMessageBody, setStewardMessageBody] = useState("");
   const [nodeName, setNodeName] = useState("");
   const [nodeSshHost, setNodeSshHost] = useState("");
   const [nodeWorkRoot, setNodeWorkRoot] = useState("");
@@ -57,6 +70,8 @@ export function App() {
   const remoteNodes = useMemo(() => dashboard.executionNodes.filter((node) => node.kind === "remote"), [dashboard.executionNodes]);
   const recentEvents = useMemo(() => [...dashboard.events].slice(-8).reverse(), [dashboard.events]);
   const memoryCount = dashboard.memories.length;
+  const goalCount = dashboard.goals.length;
+  const workerCount = dashboard.workerSessions.length;
 
   async function refresh() {
     const nextDashboard = await fetchDashboard();
@@ -90,15 +105,40 @@ export function App() {
     try {
       await createGoal({
         projectName: projectName.trim(),
+        workspacePath: workspacePath.trim(),
         title: goalTitle.trim(),
         body: goalBody.trim()
       });
-      setProjectName("");
+      setProjectName(projectName.trim());
+      setWorkspacePath(workspacePath.trim());
       setGoalTitle("");
       setGoalBody("");
       await refresh();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Failed to start Steward.");
+    }
+  }
+
+  async function submitStewardMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const body = stewardMessageBody.trim();
+
+    if (body === "") {
+      setError("Steward message cannot be empty.");
+      return;
+    }
+
+    try {
+      await sendStewardMessage({
+        body,
+        ...(projectName.trim() === "" ? {} : { projectName: projectName.trim() }),
+        ...(workspacePath.trim() === "" ? {} : { workspacePath: workspacePath.trim() })
+      });
+      setStewardMessageBody("");
+      await refresh();
+    } catch (messageError) {
+      setError(messageError instanceof Error ? messageError.message : "Failed to send Steward message.");
     }
   }
 
@@ -173,10 +213,18 @@ export function App() {
           <span>{memoryCount}</span>
           <p>Memory Items</p>
         </article>
+        <article className="metric-tile">
+          <span>{goalCount}</span>
+          <p>Goals</p>
+        </article>
+        <article className="metric-tile">
+          <span>{workerCount}</span>
+          <p>Worker Sessions</p>
+        </article>
       </section>
 
       <section className="dashboard-grid" aria-label="agent-fleet dashboard">
-        <section className="panel goal-panel">
+        <section className="panel intake-panel">
           <div className="panel-heading">
             <p className="eyebrow">Human Intent</p>
             <h2>Steward Intake</h2>
@@ -188,6 +236,14 @@ export function App() {
               placeholder="Project"
               type="text"
               value={projectName}
+            />
+            <input
+              aria-label="Target directory"
+              onChange={(event) => setWorkspacePath(event.target.value)}
+              placeholder="/Users/yewang/code/project/target"
+              required
+              type="text"
+              value={workspacePath}
             />
             <input
               aria-label="Goal title"
@@ -204,14 +260,62 @@ export function App() {
             />
             <button type="submit">Start Steward</button>
           </form>
-          <div className="item-list">
+        </section>
+
+        <section className="panel chat-panel">
+          <div className="panel-heading">
+            <p className="eyebrow">Durable Conversation</p>
+            <h2>Steward Chat</h2>
+          </div>
+          <div className="chat-log" aria-label="Steward messages">
+            {dashboard.stewardMessages.length === 0 ? (
+              <p className="empty-copy">No Steward conversation recorded.</p>
+            ) : (
+              dashboard.stewardMessages.map((message) => (
+                <article className={`message-row message-${message.role}`} key={message.id}>
+                  <div className="message-meta">
+                    <span>{message.role}</span>
+                    {message.projectName ? <span>{message.projectName}</span> : null}
+                    {message.workspacePath ? <code>{message.workspacePath}</code> : null}
+                    <time dateTime={message.createdAt}>{formatEventTime(message.createdAt)}</time>
+                  </div>
+                  <p>{message.body}</p>
+                </article>
+              ))
+            )}
+          </div>
+          <form className="stack-form chat-form" onSubmit={(event) => void submitStewardMessage(event)}>
+            <textarea
+              aria-label="Message Steward"
+              onChange={(event) => setStewardMessageBody(event.target.value)}
+              placeholder="Message the Steward Agent"
+              value={stewardMessageBody}
+            />
+            <button type="submit">Send to Steward</button>
+          </form>
+        </section>
+
+        <section className="panel goals-panel">
+          <div className="panel-heading compact-heading">
+            <p className="eyebrow">Targets</p>
+            <h2>Goals</h2>
+          </div>
+          <div className="item-list scroll-list compact-list">
             {dashboard.goals.length === 0 ? (
               <p className="empty-copy">No goals accepted yet.</p>
             ) : (
               dashboard.goals.map((goal) => (
-                <article className="item-row" key={goal.id}>
+                <article className="item-row compact-row" key={goal.id}>
                   <div>
                     <h3>{goal.title}</h3>
+                    {goal.workspacePath ? (
+                      <dl className="resource-facts compact-facts">
+                        <div>
+                          <dt>target</dt>
+                          <dd>{goal.workspacePath}</dd>
+                        </div>
+                      </dl>
+                    ) : null}
                     <p>{goal.body}</p>
                   </div>
                   <span className={`pill status-${goal.status}`}>{goal.status}</span>
@@ -224,9 +328,9 @@ export function App() {
         <section className="panel decision-panel">
           <div className="panel-heading">
             <p className="eyebrow">Autonomy Audit</p>
-            <h2>Decision Ledger</h2>
+            <h2>Decisions Needing Review</h2>
           </div>
-          <div className="item-list">
+          <div className="item-list scroll-list decision-list">
             {activeDecisions.length === 0 ? (
               <p className="empty-copy">No Steward decisions recorded.</p>
             ) : (
@@ -242,7 +346,7 @@ export function App() {
                       {decision.needsHumanReview ? <span className="pill review-pill">needs review</span> : null}
                     </div>
                   </div>
-                  <dl className="decision-metrics">
+                  <dl className="decision-metrics inline-facts">
                     <div>
                       <dt>confidence</dt>
                       <dd>{Math.round(decision.confidence * 100)}%</dd>
@@ -256,11 +360,9 @@ export function App() {
                       <dd>{decision.status}</dd>
                     </div>
                   </dl>
-                  <ul className="action-list">
-                    {actions(decision).map((action) => (
-                      <li key={action}>{action}</li>
-                    ))}
-                  </ul>
+                  {actions(decision).length > 0 ? (
+                    <p className="action-summary">{actions(decision).join(" | ")}</p>
+                  ) : null}
                   <div className="correction-box">
                     <textarea
                       aria-label={`Correction for ${decision.title}`}
@@ -285,17 +387,21 @@ export function App() {
             <p className="eyebrow">Execution</p>
             <h2>Worker Sessions</h2>
           </div>
-          <div className="item-list">
+          <div className="item-list scroll-list compact-list">
             {dashboard.workerSessions.length === 0 ? (
               <p className="empty-copy">No Worker Agent sessions yet.</p>
             ) : (
               dashboard.workerSessions.map((session) => (
-                <article className="item-row worker-row" key={session.id}>
+                <article className="item-row worker-row compact-row" key={session.id}>
                   <div>
-                    <h3>{session.kind}</h3>
-                    <p>{session.command}</p>
+                    <h3>
+                      {session.kind} <span>{session.command}</span>
+                    </h3>
                     <p>{session.cwd}</p>
-                    {session.pid ? <p>pid {session.pid}</p> : null}
+                    <div className="row-meta">
+                      {session.pid ? <span>pid {session.pid}</span> : null}
+                      {session.resumeId ? <span>resume {session.resumeId}</span> : null}
+                    </div>
                     {session.resumeId ? <code className="copy-command">{resumeCommand(session.command, session.resumeId)}</code> : null}
                     {session.status === "failed" && session.lastOutput ? <p>{session.lastOutput}</p> : null}
                   </div>
@@ -306,42 +412,90 @@ export function App() {
           </div>
         </section>
 
-        <section className="panel worktree-panel">
+        <section className="panel recovery-panel">
           <div className="panel-heading">
-            <p className="eyebrow">Isolation</p>
-            <h2>Worktrees</h2>
+            <p className="eyebrow">Recovery Context</p>
+            <h2>Recovery / Audit</h2>
           </div>
-          <div className="item-list">
-            {dashboard.worktreeAssignments.length === 0 ? (
-              <p className="empty-copy">No worktree assignments yet.</p>
-            ) : (
-              dashboard.worktreeAssignments.map((assignment) => (
-                <article className="item-row resource-row" key={assignment.id}>
-                  <div>
-                    <h3>{assignment.branchName}</h3>
-                    <dl className="resource-facts">
+          <div className="recovery-grid">
+            <section className="subpanel">
+              <div className="subpanel-heading">
+                <h2>Worktrees</h2>
+              </div>
+              <div className="item-list scroll-list mini-list">
+                {dashboard.worktreeAssignments.length === 0 ? (
+                  <p className="empty-copy">No worktree assignments yet.</p>
+                ) : (
+                  dashboard.worktreeAssignments.map((assignment) => (
+                    <article className="item-row resource-row compact-row" key={assignment.id}>
                       <div>
-                        <dt>path</dt>
-                        <dd>{assignment.worktreePath}</dd>
+                        <h3>{assignment.branchName}</h3>
+                        <dl className="resource-facts">
+                          <div>
+                            <dt>path</dt>
+                            <dd>{assignment.worktreePath}</dd>
+                          </div>
+                          <div>
+                            <dt>repo</dt>
+                            <dd>{assignment.repositoryPath}</dd>
+                          </div>
+                        </dl>
                       </div>
-                      <div>
-                        <dt>repo</dt>
-                        <dd>{assignment.repositoryPath}</dd>
+                      <span className={`pill status-${assignment.status}`}>{assignment.status}</span>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="subpanel">
+              <div className="subpanel-heading">
+                <h2>Events / Audit</h2>
+              </div>
+              <div className="item-list scroll-list mini-list">
+                {recentEvents.length === 0 ? (
+                  <p className="empty-copy">No control-plane events recorded.</p>
+                ) : (
+                  recentEvents.map((event) => (
+                    <article className="event-row compact-event-row" key={event.id}>
+                      <div className="event-head">
+                        <h3>{event.type}</h3>
+                        <time dateTime={event.createdAt}>{formatEventTime(event.createdAt)}</time>
                       </div>
-                    </dl>
-                  </div>
-                  <span className={`pill status-${assignment.status}`}>{assignment.status}</span>
-                </article>
-              ))
-            )}
+                      <p>{event.message}</p>
+                      <dl className="event-links">
+                        {event.goalId ? (
+                          <div>
+                            <dt>goal</dt>
+                            <dd>{event.goalId}</dd>
+                          </div>
+                        ) : null}
+                        {event.decisionId ? (
+                          <div>
+                            <dt>decision</dt>
+                            <dd>{event.decisionId}</dd>
+                          </div>
+                        ) : null}
+                        {event.workerSessionId ? (
+                          <div>
+                            <dt>worker</dt>
+                            <dd>{event.workerSessionId}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
           </div>
         </section>
 
-        <section className="panel node-panel">
-          <div className="panel-heading">
-            <p className="eyebrow">Remote Capacity</p>
+        <details className="panel node-panel secondary-panel" open>
+          <summary>
+            <span className="eyebrow">Remote Capacity</span>
             <h2>Remote Nodes</h2>
-          </div>
+          </summary>
           <form className="node-form" onSubmit={(event) => void submitRemoteNode(event)}>
             <input
               aria-label="Remote node name"
@@ -384,12 +538,12 @@ export function App() {
             </select>
             <button type="submit">Register node</button>
           </form>
-          <div className="item-list">
+          <div className="item-list scroll-list mini-list">
             {remoteNodes.length === 0 ? (
               <p className="empty-copy">No remote execution nodes registered.</p>
             ) : (
               remoteNodes.map((node) => (
-                <article className="item-row resource-row" key={node.id}>
+                <article className="item-row resource-row compact-row" key={node.id}>
                   <div>
                     <h3>{node.name}</h3>
                     <dl className="resource-facts">
@@ -416,61 +570,19 @@ export function App() {
               ))
             )}
           </div>
-        </section>
+        </details>
 
-        <section className="panel events-panel">
-          <div className="panel-heading">
-            <p className="eyebrow">Control Plane</p>
-            <h2>Events / Audit</h2>
-          </div>
-          <div className="item-list">
-            {recentEvents.length === 0 ? (
-              <p className="empty-copy">No control-plane events recorded.</p>
-            ) : (
-              recentEvents.map((event) => (
-                <article className="event-row" key={event.id}>
-                  <div className="event-head">
-                    <h3>{event.type}</h3>
-                    <time dateTime={event.createdAt}>{formatEventTime(event.createdAt)}</time>
-                  </div>
-                  <p>{event.message}</p>
-                  <dl className="event-links">
-                    {event.goalId ? (
-                      <div>
-                        <dt>goal</dt>
-                        <dd>{event.goalId}</dd>
-                      </div>
-                    ) : null}
-                    {event.decisionId ? (
-                      <div>
-                        <dt>decision</dt>
-                        <dd>{event.decisionId}</dd>
-                      </div>
-                    ) : null}
-                    {event.workerSessionId ? (
-                      <div>
-                        <dt>worker</dt>
-                        <dd>{event.workerSessionId}</dd>
-                      </div>
-                    ) : null}
-                  </dl>
-                </article>
-              ))
-            )}
-          </div>
-        </section>
-
-        <section className="panel memory-panel">
-          <div className="panel-heading">
-            <p className="eyebrow">Learning</p>
+        <details className="panel memory-panel secondary-panel">
+          <summary>
+            <span className="eyebrow">Learning</span>
             <h2>Memory</h2>
-          </div>
-          <div className="item-list">
+          </summary>
+          <div className="item-list scroll-list mini-list">
             {dashboard.memories.length === 0 ? (
               <p className="empty-copy">No learned preferences yet.</p>
             ) : (
               dashboard.memories.map((memory) => (
-                <article className="item-row" key={memory.id}>
+                <article className="item-row compact-row" key={memory.id}>
                   <div>
                     <h3>{memory.key}</h3>
                     <p>{memory.value}</p>
@@ -480,7 +592,7 @@ export function App() {
               ))
             )}
           </div>
-        </section>
+        </details>
       </section>
     </main>
   );

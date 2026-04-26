@@ -5,8 +5,8 @@ Remote execution is a planned capability. The goal is to keep the local Mac resp
 ## Target Behavior
 
 - The Steward Agent chooses local or remote execution based on project policy, machine load, and task needs.
-- Worker sessions record host, cwd, worktree, command, pid, resume id, status, and logs.
-- The browser control plane remains local and responsive.
+- Worker sessions record host, target workspace cwd, worktree, command, pid, resume id, status, and logs.
+- The browser control plane remains local, compact, and management-only.
 - Interrupted remote sessions can be resumed without reconstructing terminal state by hand.
 
 ## SSH Worker Adapter
@@ -20,8 +20,10 @@ ssh <host> <quoted-remote-shell-command>
 The remote command is a minimal `sh -lc` wrapper that changes to the requested remote `cwd`, applies optional environment variables, and `exec`s the Worker command:
 
 ```sh
-cd '<remote cwd>' && exec env HTTPS_PROXY='<proxy url>' codexyoloproxy
+cd '<remote target workspace>' && exec env HTTPS_PROXY='<proxy url>' codex exec --json --sandbox workspace-write -
 ```
+
+Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata; business project code and UI still belong in the target workspace, not in the agent-fleet dashboard.
 
 Behavior:
 

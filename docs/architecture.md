@@ -4,27 +4,33 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 
 ## Components
 
-- `src/client`: React dashboard for goals, Steward decisions, Worker sessions, corrections, and memory.
+- `src/client`: React dashboard for Steward Chat, Steward Intake, goals, decisions, corrections, Worker sessions, remote nodes, worktrees, events, and memory.
 - `src/server/http`: Fastify app, route validation, and API composition.
 - `src/server/steward`: orchestration behavior that turns human goals into decisions and Worker instructions.
-- `src/server/store`: durable state for goals, decisions, Worker sessions, corrections, memories, execution nodes, and events.
+- `src/server/store`: durable state for goals, decisions, Worker sessions, corrections, memories, execution nodes, worktree assignments, Steward Chat messages, checkpoints, and events.
 - `src/server/workers`: process adapters for Worker Agent commands.
 - `src/server/remote`: pure remote execution policy helpers, including domain-aware proxy routing and remote node readiness decisions.
 - `src/shared`: TypeScript contracts shared by browser and server.
 
 ## Current Flow
 
-1. The browser submits a goal to `POST /api/goals`.
+1. The browser records owner/Steward chat through `POST /api/steward/messages`, or submits a goal with an explicit `workspacePath` to `POST /api/goals`.
 2. The HTTP layer validates input and calls `StewardRuntime`.
 3. The Steward records an auditable decision.
-4. The Worker adapter launches the configured Worker command or zsh alias.
+4. The Worker adapter launches the configured Worker command or zsh alias in the target workspace.
 5. The store records Worker metadata such as command, cwd, pid, resume id, status, and initial output.
 6. The browser reads `GET /api/dashboard`.
 7. Human corrections go through `POST /api/decisions/:id/corrections` and become both correction records and memory.
 
+The owner should interact with the Steward, not directly manage many Worker terminals. Worker prompts tell downstream agents to treat Steward instructions as the human owner's instructions.
+
+For new owner instructions, the Steward should usually create a clearly named Worker task, such as `Worker: compact-dashboard-ui`, or send the instruction as an update to an existing relevant Worker. The Steward's own working context should stay compact: goals, decisions, active Worker ownership, blockers, and verification results are coordinator state; code reading, implementation, review, and testing should be delegated to Workers where practical. Completing one Worker task is not a stopping condition by itself; the Steward should continue to the next Worker or verification step unless blocked.
+
 ## State Model
 
 The first implementation uses `.agent-fleet/control-plane.json`. This keeps the project easy to inspect and test. A future database can preserve the same domain records while improving concurrency, querying, and log volume.
+
+Steward Chat is product state. Owner and Steward messages are persisted in the `stewardMessages` array and surfaced through the dashboard and recovery flow.
 
 ## Lifecycle Supervision
 
@@ -46,4 +52,5 @@ Worktree materialization performs the side effects behind an injected runner. `m
 - Worker adapters should not own product decision logic.
 - Remote helpers should stay pure unless they are explicit adapters; SSH and network probes belong behind adapter boundaries.
 - Steward logic should record decisions before launching irreversible or externally visible work.
+- Project-specific implementation and business UI belong in the target `workspacePath`; the browser dashboard stays a compact control-plane surface for management, status, review, correction, and recovery.
 - Shared types should remain serializable and browser-safe.

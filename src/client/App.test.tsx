@@ -9,6 +9,7 @@ const dashboard = {
     {
       id: "goal-1",
       projectName: "agent-fleet",
+      workspacePath: "/Users/yewang/code/project/agent-fleet",
       title: "Bootstrap agent-fleet",
       body: "Build the Steward/Worker loop.",
       status: "running",
@@ -47,6 +48,26 @@ const dashboard = {
       lastOutput: "started",
       createdAt: "2026-04-26T00:00:00.000Z",
       updatedAt: "2026-04-26T00:00:00.000Z"
+    }
+  ],
+  stewardMessages: [
+    {
+      id: "message-1",
+      role: "owner",
+      projectName: "agent-fleet",
+      workspacePath: "/Users/yewang/code/project/agent-fleet",
+      goalId: "goal-1",
+      body: "Please keep Worker execution durable.",
+      createdAt: "2026-04-26T00:00:30.000Z"
+    },
+    {
+      id: "message-2",
+      role: "steward",
+      projectName: "agent-fleet",
+      workspacePath: "/Users/yewang/code/project/agent-fleet",
+      goalId: "goal-1",
+      body: "I will record the decision trail before dispatching work.",
+      createdAt: "2026-04-26T00:00:40.000Z"
     }
   ],
   corrections: [],
@@ -117,16 +138,24 @@ describe("App", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders the Steward control plane with decisions and Worker sessions", async () => {
+  it("renders a compact management dashboard without business project UI", async () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "agent-fleet" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Decision Ledger" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Steward Intake" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Goals" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Decisions Needing Review" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Worker Sessions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Recovery / Audit" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Memory" })).toBeInTheDocument();
     expect(screen.getByText("Start Worker Agent for goal")).toBeInTheDocument();
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.getByText("codexyoloproxy")).toBeInTheDocument();
     expect(screen.getByText("pid 4242")).toBeInTheDocument();
     expect(screen.getByText("codexyoloproxy resume resume-1")).toBeInTheDocument();
+    expect(screen.queryByText(/Mahjong Arena/i)).not.toBeInTheDocument();
   });
 
   it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
@@ -223,6 +252,7 @@ describe("App", () => {
     render(<App />);
 
     await user.type(await screen.findByLabelText("Project"), "agent-fleet");
+    await user.type(screen.getByLabelText("Target directory"), "/Users/yewang/code/project/mahjong");
     await user.type(screen.getByLabelText("Goal title"), "Bootstrap agent-fleet");
     await user.type(screen.getByLabelText("Goal body"), "Build the Steward/Worker loop.");
     await user.click(screen.getByRole("button", { name: "Start Steward" }));
@@ -233,11 +263,82 @@ describe("App", () => {
         method: "POST",
         body: JSON.stringify({
           projectName: "agent-fleet",
+          workspacePath: "/Users/yewang/code/project/mahjong",
           title: "Bootstrap agent-fleet",
           body: "Build the Steward/Worker loop."
         })
       })
     );
+  });
+
+  it("shows goal target directories", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("target")).toBeInTheDocument();
+    expect(screen.getAllByText("/Users/yewang/code/project/agent-fleet").length).toBeGreaterThan(0);
+  });
+
+  it("renders persisted Steward chat messages and sends owner messages with context", async () => {
+    const refreshedDashboard = {
+      ...dashboard,
+      stewardMessages: [
+        ...dashboard.stewardMessages,
+        {
+          id: "message-3",
+          role: "owner",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          goalId: null,
+          body: "Use the external Mahjong workspace.",
+          createdAt: "2026-04-26T00:03:00.000Z"
+        }
+      ]
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(dashboard))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ownerMessage: refreshedDashboard.stewardMessages[2],
+          stewardMessage: {
+            id: "message-4",
+            role: "steward",
+            projectName: "mahjong",
+            workspacePath: "/Users/yewang/code/project/mahjong",
+            goalId: null,
+            body: "Acknowledged.",
+            createdAt: "2026-04-26T00:03:10.000Z"
+          }
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse(refreshedDashboard));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
+    expect(screen.getByText("Please keep Worker execution durable.")).toBeInTheDocument();
+    expect(screen.getByText("I will record the decision trail before dispatching work.")).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Project"), "mahjong");
+    await user.type(screen.getByLabelText("Target directory"), "/Users/yewang/code/project/mahjong");
+    await user.type(screen.getByLabelText("Message Steward"), "Use the external Mahjong workspace.");
+    await user.click(screen.getByRole("button", { name: "Send to Steward" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/steward/messages",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          body: "Use the external Mahjong workspace.",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong"
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/dashboard");
+    expect(await screen.findByText("Use the external Mahjong workspace.")).toBeInTheDocument();
   });
 
   it("sends a correction for a Steward decision", async () => {
