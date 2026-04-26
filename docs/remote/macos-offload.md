@@ -158,15 +158,20 @@ When a goal is accepted:
 
 ## Remote Workspace Provisioning
 
-Before launching an SSH-backed Worker, the Steward conservatively prepares the selected remote cwd:
+Before launching an SSH-backed Worker, the Steward prepares the selected remote cwd through Git refs by default:
 
-- It always attempts to create the remote cwd with `mkdir -p`.
-- If the submitted local `workspacePath` is inside a git repository with `remote.origin.url`, it asks the remote host to prepare that cwd from git by clone, fetch, and checkout.
-- If the remote cwd already contains a git checkout, provisioning fetches from origin and checks out the local branch/commit.
+- The local workspace must be inside a git repository with `remote.origin.url`.
+- The local worktree must be clean according to `git status --porcelain=v1 -z`; dirty worktrees block remote git-ref sync by default.
+- The Steward resolves `HEAD`, derives deterministic refs from the Worker Name, and pushes the Worker ref to `origin`.
+- Worker refs use `refs/heads/agent-fleet/workers/<worker-name>`.
+- Returned result refs use `refs/heads/agent-fleet/results/<worker-name>`.
+- The remote host is treated as stateless scratch space. It clones or fetches from `origin`, fetches the Worker ref, and checks out a local branch from `FETCH_HEAD`.
 - If the remote cwd exists but is non-empty and is not a git checkout, provisioning blocks instead of deleting or overwriting it.
-- If the local workspace is not in git or has no origin URL, provisioning records a clear blocked Worker session/checkpoint instead of pretending that the remote cwd is usable.
+- If the local workspace is not in git, has no origin URL, is dirty, cannot push the Worker ref, or cannot prepare the remote checkout, provisioning records a clear blocked Worker session/checkpoint instead of pretending that the remote cwd is usable.
 
-The MVP intentionally does not rsync project directories, push commits, copy local uncommitted changes, copy secrets, or clean remote disks. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
+After remote execution, the inbound sync path fetches the returned result ref from `origin` and checks it out to `agent-fleet/results/<worker-name>` for review. The review/merge Worker is responsible for deciding how that result branch is merged.
+
+The default path intentionally does not rsync project directories, copy local uncommitted changes, copy secrets, or clean remote disks. `rsync` is only a fallback for future workflows that explicitly opt out of Git-ref sync. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
 
 Owner-facing audit records include whether provisioning prepared the remote workspace or blocked Worker launch. When blocked, the Worker session is recorded as failed with command `remote workspace provisioning`, and the checkpoint explains what must be fixed, such as adding a git origin or preparing remote authentication.
 

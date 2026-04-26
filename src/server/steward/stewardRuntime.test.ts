@@ -123,10 +123,14 @@ describe("StewardRuntime", () => {
         localWorkspacePath: "/projects/agent-fleet",
         remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/agent-fleet"
       });
+      expect(provisioner.inputs[0].workerName).toMatch(/^agent-fleet-run-high-cpu-build-remote-\d{12}$/);
       expect(remoteAdapter.startInputs).toHaveLength(1);
       expect(remoteAdapter.startInputs[0].cwd).toBe("/srv/agent-fleet/agent-fleet/agent-fleet");
       expect(dashboard.decisions[0].actionsJson).toContain("Provision remote scratch workspace before Worker launch");
       expect(dashboard.stewardCheckpoints[0].nextAction).toContain("Remote workspace prepared from git origin.");
+      expect(dashboard.worktreeAssignments[0].branchName).toMatch(
+        /^agent-fleet\/workers\/agent-fleet-run-high-cpu-build-remote-\d{12}$/
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

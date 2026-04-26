@@ -1,5 +1,6 @@
 import { join, posix } from "node:path";
 import type { Goal, DecisionCorrection, ExecutionNode, WorkerReport, WorkerReportStatus } from "../../shared/types.js";
+import { buildGitRefSyncRefs } from "../remote/gitRefSync.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import type { RemoteWorkspaceProvisioner, RemoteWorkspaceProvisionResult } from "../remote/remoteWorkspaceProvisioner.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
@@ -118,7 +119,7 @@ export class StewardRuntime {
         workerSessionId: session.id,
         repositoryPath,
         worktreePath: placement.worktreePath,
-        branchName: `remote/${session.id}-${slugify(goal.title)}`
+        branchName: remoteWorkerBranchName(placement.workerName)
       });
       await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
       const updatedGoal = await this.options.store.updateGoalStatus(goal.id, "blocked");
@@ -169,7 +170,7 @@ export class StewardRuntime {
           })
         : {
             path: placement.worktreePath,
-            branchName: `remote/${session.id}-${slugify(goal.title)}`
+            branchName: remoteWorkerBranchName(placement.workerName)
           });
     await this.options.store.createWorktreeAssignment({
       workerSessionId: session.id,
@@ -310,7 +311,8 @@ export class StewardRuntime {
     return this.options.remoteWorkspaceProvisioner.provision({
       node,
       localWorkspacePath: workspacePath,
-      remoteWorkspacePath: placement.cwd
+      remoteWorkspacePath: placement.cwd,
+      workerName: placement.workerName
     });
   }
 
@@ -429,6 +431,10 @@ export class StewardRuntime {
 
 function buildRemoteWorkspacePath(node: ExecutionNode, projectName: string, workspacePath: string): string {
   return posix.join(node.workRoot, slugify(projectName), slugify(workspaceName(workspacePath)));
+}
+
+function remoteWorkerBranchName(workerName: string): string {
+  return buildGitRefSyncRefs(workerName).workerBranch;
 }
 
 function detectGoalResourceTags(goal: Goal): string[] {

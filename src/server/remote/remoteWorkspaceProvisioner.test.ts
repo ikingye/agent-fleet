@@ -4,16 +4,24 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import type { ExecutionNode } from "../../shared/types.js";
-import { GitRemoteWorkspaceProvisioner, type RemoteWorkspaceProvisionRunner } from "./remoteWorkspaceProvisioner.js";
+import { GitRefSync, type GitRefSyncCommand, type GitRefSyncCommandResult, type GitRefSyncCommandRunner } from "./gitRefSync.js";
+import { GitRemoteWorkspaceProvisioner } from "./remoteWorkspaceProvisioner.js";
 
-class CapturingProvisionRunner implements RemoteWorkspaceProvisionRunner {
-  readonly inputs: Array<{ sshHost: string; remoteScript: string }> = [];
+class CapturingProvisionRunner implements GitRefSyncCommandRunner {
+  readonly sshInputs: Array<{ sshHost: string; remoteScript: string }> = [];
 
   constructor(private readonly exitCode = 0) {}
 
-  async run(input: { sshHost: string; remoteScript: string }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-    this.inputs.push(input);
-    return { exitCode: this.exitCode, stdout: "", stderr: "" };
+  async run(command: GitRefSyncCommand): Promise<GitRefSyncCommandResult> {
+    if (command.kind === "ssh") {
+      this.sshInputs.push({
+        sshHost: command.sshHost,
+        remoteScript: command.remoteScript
+      });
+      return { exitCode: this.exitCode, stdout: "", stderr: "" };
+    }
+
+    return runGit(command.args, command.cwd);
   }
 }
 
@@ -21,28 +29,32 @@ describe("GitRemoteWorkspaceProvisioner", () => {
   it("ensures the remote cwd and prepares a git checkout when the local workspace has an origin", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-provision-"));
     const workspace = join(dir, "workspace");
+    const origin = join(dir, "origin.git");
     const runner = new CapturingProvisionRunner();
 
     try {
-      await createGitWorkspace(workspace, "git@example.com:owner/repo.git");
-      const provisioner = new GitRemoteWorkspaceProvisioner(runner);
+      await run("git", ["init", "--bare", origin]);
+      await createGitWorkspace(workspace, origin);
+      const provisioner = new GitRemoteWorkspaceProvisioner(new GitRefSync(runner));
 
       const result = await provisioner.provision({
         node: remoteNode(),
         localWorkspacePath: workspace,
-        remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/repo"
+        remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/repo",
+        workerName: "agent-fleet-run-build-remote-202604262208"
       });
 
       expect(result.status).toBe("prepared");
-      expect(result.summary).toContain("git@example.com:owner/repo.git");
-      expect(runner.inputs).toHaveLength(2);
-      expect(runner.inputs[0]).toEqual({
-        sshHost: "worker@builder.internal",
-        remoteScript: "mkdir -p '/srv/agent-fleet/agent-fleet/repo'"
-      });
-      expect(runner.inputs[1].remoteScript).toContain("git clone 'git@example.com:owner/repo.git'");
-      expect(runner.inputs[1].remoteScript).toContain("git fetch --prune origin");
-      expect(runner.inputs[1].remoteScript).toContain("git checkout 'main'");
+      expect(result.summary).toContain("refs/heads/agent-fleet/workers/agent-fleet-run-build-remote-202604262208");
+      expect(runner.sshInputs).toHaveLength(1);
+      expect(runner.sshInputs[0].sshHost).toBe("worker@builder.internal");
+      expect(runner.sshInputs[0].remoteScript).toContain(`git clone --no-checkout '${origin}'`);
+      expect(runner.sshInputs[0].remoteScript).toContain(
+        "git fetch origin '+refs/heads/agent-fleet/workers/agent-fleet-run-build-remote-202604262208:refs/remotes/origin/agent-fleet/workers/agent-fleet-run-build-remote-202604262208'"
+      );
+      expect(runner.sshInputs[0].remoteScript).toContain(
+        "git checkout -B 'agent-fleet/workers/agent-fleet-run-build-remote-202604262208' FETCH_HEAD"
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -55,18 +67,18 @@ describe("GitRemoteWorkspaceProvisioner", () => {
 
     try {
       await createGitWorkspace(workspace, null);
-      const provisioner = new GitRemoteWorkspaceProvisioner(runner);
+      const provisioner = new GitRemoteWorkspaceProvisioner(new GitRefSync(runner));
 
       const result = await provisioner.provision({
         node: remoteNode(),
         localWorkspacePath: workspace,
-        remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/repo"
+        remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/repo",
+        workerName: "agent-fleet-run-build-remote-202604262208"
       });
 
       expect(result.status).toBe("blocked");
       expect(result.summary).toContain("has no remote origin URL");
-      expect(runner.inputs).toHaveLength(1);
-      expect(runner.inputs[0].remoteScript).toBe("mkdir -p '/srv/agent-fleet/agent-fleet/repo'");
+      expect(runner.sshInputs).toHaveLength(0);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -102,6 +114,27 @@ function run(command: string, args: string[], cwd?: string): Promise<void> {
       }
 
       reject(new Error(`${command} ${args.join(" ")} failed: ${stderr}`));
+    });
+  });
+}
+
+function runGit(args: string[], cwd?: string): Promise<GitRefSyncCommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      resolve({ exitCode: 1, stdout, stderr: `${stderr}${error.message}` });
+    });
+    child.on("close", (code) => {
+      resolve({ exitCode: code ?? 1, stdout, stderr });
     });
   });
 }
