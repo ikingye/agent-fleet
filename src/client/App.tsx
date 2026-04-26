@@ -1,12 +1,14 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import type { ExecutionNode, StewardDecision, WorkerSession } from "../shared/types.js";
+import type { ExecutionNode, StewardDecision, WorkerReport, WorkerSession } from "../shared/types.js";
 import {
   type ClientDashboardData,
   type ClientExecutionNode,
   correctDecision,
   createGoal,
   fetchDashboard,
+  reconcileRecovery,
   registerExecutionNode,
+  runAutonomyTick,
   sendStewardMessage
 } from "./api.js";
 
@@ -19,6 +21,7 @@ const emptyDashboard: ClientDashboardData = {
   executionNodes: [],
   worktreeAssignments: [],
   stewardCheckpoints: [],
+  workerReports: [],
   agentArtifacts: [],
   reviews: [],
   deliveryReports: [],
@@ -78,6 +81,18 @@ function isKeyDecision(decision: StewardDecision): boolean {
   );
 }
 
+function primaryReportDetail(values: string[]): string {
+  return values[0] ?? "No detail recorded.";
+}
+
+function reportFileSummary(report: WorkerReport): string {
+  if (report.changedFiles.length === 0) {
+    return "No files listed.";
+  }
+
+  return report.changedFiles.slice(0, 3).join(", ");
+}
+
 type DashboardTab = "overview" | "goals" | "workers" | "recovery" | "resources";
 
 const dashboardTabs: Array<{ id: DashboardTab; label: string }> = [
@@ -107,6 +122,7 @@ export function App() {
   const [showWorkerMessages, setShowWorkerMessages] = useState(false);
   const [showWorkerDebug, setShowWorkerDebug] = useState(false);
   const [showWorkerHistory, setShowWorkerHistory] = useState(false);
+  const [ownerActionRunning, setOwnerActionRunning] = useState<"autonomy" | "reconcile" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const keyDecisions = useMemo(
     () =>
@@ -133,6 +149,11 @@ export function App() {
     () => new Map(dashboard.workerSessions.map((session) => [session.id, session])),
     [dashboard.workerSessions]
   );
+  const goalById = useMemo(() => new Map(dashboard.goals.map((goal) => [goal.id, goal])), [dashboard.goals]);
+  const decisionById = useMemo(
+    () => new Map(dashboard.decisions.map((decision) => [decision.id, decision])),
+    [dashboard.decisions]
+  );
   const executionNodeById = useMemo(
     () => new Map(dashboard.executionNodes.map((node) => [node.id, node])),
     [dashboard.executionNodes]
@@ -151,6 +172,10 @@ export function App() {
   const workerMessages = useMemo(
     () => dashboard.stewardMessages.filter((message) => message.role === "worker"),
     [dashboard.stewardMessages]
+  );
+  const recentWorkerReports = useMemo(
+    () => [...dashboard.workerReports].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 5),
+    [dashboard.workerReports]
   );
   const memoryCount = dashboard.memories.length;
   const goalCount = dashboard.goals.length;
@@ -269,6 +294,23 @@ export function App() {
       await refresh();
     } catch (nodeError) {
       setError(nodeError instanceof Error ? nodeError.message : "Failed to register execution node.");
+    }
+  }
+
+  async function runOwnerAction(kind: "autonomy" | "reconcile") {
+    setOwnerActionRunning(kind);
+
+    try {
+      if (kind === "autonomy") {
+        await runAutonomyTick();
+      } else {
+        await reconcileRecovery();
+      }
+      await refresh();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Owner action failed.");
+    } finally {
+      setOwnerActionRunning(null);
     }
   }
 
@@ -603,6 +645,61 @@ export function App() {
           </div>
         </section>
 
+        <section
+          aria-label="Worker Report Summary"
+          className="panel report-panel"
+          hidden={selectedTab !== "overview"}
+        >
+          <div className="panel-heading">
+            <p className="eyebrow">Worker Reports</p>
+            <h2>Worker Report Summary</h2>
+          </div>
+          <div className="item-list scroll-list compact-list">
+            {recentWorkerReports.length === 0 ? (
+              <p className="empty-copy">No structured Worker reports yet.</p>
+            ) : (
+              recentWorkerReports.map((report) => {
+                const goal = goalById.get(report.goalId) ?? null;
+                const session = workerSessionById.get(report.workerSessionId) ?? null;
+                const decision = session === null ? null : decisionById.get(session.decisionId) ?? null;
+
+                return (
+                  <article className="report-row" key={report.id}>
+                    <div className="report-head">
+                      <div>
+                        <h3>{goal?.title ?? report.goalId}</h3>
+                        {decision ? <p>{decision.title}</p> : null}
+                      </div>
+                      <div className="badge-cluster">
+                        <span className={`pill report-status-${report.status.toLowerCase()}`}>{report.status}</span>
+                        {report.needsOwnerReview ? <span className="pill review-pill">needs owner review</span> : null}
+                      </div>
+                    </div>
+                    <dl className="report-facts">
+                      <div>
+                        <dt>verification</dt>
+                        <dd>{primaryReportDetail(report.verification)}</dd>
+                      </div>
+                      <div>
+                        <dt>blocker</dt>
+                        <dd>{primaryReportDetail(report.blockers)}</dd>
+                      </div>
+                      <div>
+                        <dt>next</dt>
+                        <dd>{primaryReportDetail(report.nextActions)}</dd>
+                      </div>
+                      <div>
+                        <dt>files</dt>
+                        <dd>{reportFileSummary(report)}</dd>
+                      </div>
+                    </dl>
+                  </article>
+                );
+              })
+            )}
+          </div>
+        </section>
+
         <section aria-labelledby="worker-sessions-heading" className="panel worker-panel" hidden={selectedTab !== "workers"}>
           <div className="panel-heading">
             <p className="eyebrow">Operations</p>
@@ -740,6 +837,23 @@ export function App() {
             <p className="eyebrow">Recovery Context</p>
             <h2>Recovery Context</h2>
           </div>
+          <section aria-label="Owner recovery actions" className="owner-action-strip">
+            <button
+              disabled={ownerActionRunning !== null}
+              onClick={() => void runOwnerAction("autonomy")}
+              type="button"
+            >
+              {ownerActionRunning === "autonomy" ? "Running autonomy..." : "Run autonomy tick"}
+            </button>
+            <button
+              className="secondary-button"
+              disabled={ownerActionRunning !== null}
+              onClick={() => void runOwnerAction("reconcile")}
+              type="button"
+            >
+              {ownerActionRunning === "reconcile" ? "Reconciling..." : "Reconcile recovery"}
+            </button>
+          </section>
           <div className="recovery-grid">
             <section className="subpanel">
               <div className="subpanel-heading">
