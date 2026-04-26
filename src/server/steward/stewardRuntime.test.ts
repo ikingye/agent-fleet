@@ -576,6 +576,61 @@ describe("StewardRuntime", () => {
     }
   });
 
+  it("applies relevant durable memories to the Worker prompt and dispatch audit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const workerAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertMemory({
+        scope: "user",
+        projectName: null,
+        key: "preference:terminology:steward-worker",
+        value: "Use Steward Agent and Worker Agent terminology.",
+        sourceCorrectionId: null
+      });
+      await store.upsertMemory({
+        scope: "project",
+        projectName: "agent-fleet",
+        key: "preference:worker-naming",
+        value: "Worker names must follow <project-name>-<purpose>-YYYYMMDDHHmm.",
+        sourceCorrectionId: null
+      });
+      await store.upsertMemory({
+        scope: "project",
+        projectName: "mahjong",
+        key: "preference:workspace",
+        value: "Keep mahjong implementation in /projects/mahjong.",
+        sourceCorrectionId: null
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet"
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Use durable memory",
+        body: "Dispatch a Worker with owner preferences."
+      });
+
+      const dashboard = await store.dashboard();
+      const prompt = workerAdapter.startInputs[0].prompt;
+
+      expect(prompt).toContain("Relevant owner memory:");
+      expect(prompt).toContain("- Use Steward Agent and Worker Agent terminology.");
+      expect(prompt).toContain("- Worker names must follow <project-name>-<purpose>-YYYYMMDDHHmm.");
+      expect(prompt).not.toContain("Keep mahjong implementation in /projects/mahjong.");
+      expect(dashboard.decisions[0].rationale).toContain("Applied 2 relevant owner memories.");
+      expect(dashboard.decisions[0].actionsJson).toContain("Apply 2 relevant owner memories to Worker instructions");
+      expect(dashboard.stewardCheckpoints[0].nextAction).toContain("Memory applied: 2 relevant owner preferences.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("records human correction and creates a follow-up Steward decision", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
 
@@ -605,7 +660,7 @@ describe("StewardRuntime", () => {
       expect(dashboard.memories).toContainEqual(
         expect.objectContaining({
           scope: "user",
-          key: "correction:terminology",
+          key: "preference:terminology:steward-worker",
           value: "Do not use Butler terminology. Use Steward Agent and Worker Agent."
         })
       );
@@ -616,6 +671,52 @@ describe("StewardRuntime", () => {
         summary: "Human correction recorded for Steward decision.",
         nextAction: "Use the correction in future Worker instructions and recovery summaries."
       });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("turns remote execution corrections into reusable structured memory", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: new FakeWorkerAdapter(),
+        defaultWorkerCwd: "/worktrees/agent-fleet"
+      });
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Bootstrap agent-fleet",
+        body: "Build the first Steward/Worker loop."
+      });
+      const decision = (await store.dashboard()).decisions[0];
+
+      const correction = await runtime.correctDecision({
+        decisionId: decision.id,
+        body: "For long/high-load tasks, route Workers to remote server aicp-hhht-231 and include -remote- in Worker names."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(dashboard.memories).toContainEqual(
+        expect.objectContaining({
+          scope: "user",
+          key: "preference:execution:remote-high-load",
+          value: correction.body,
+          sourceCorrectionId: correction.id
+        })
+      );
+      expect(dashboard.memories).toContainEqual(
+        expect.objectContaining({
+          scope: "user",
+          key: "preference:worker-naming:remote-marker",
+          value: correction.body,
+          sourceCorrectionId: correction.id
+        })
+      );
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
