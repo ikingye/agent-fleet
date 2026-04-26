@@ -37,6 +37,88 @@ describe("CommandWorkerAdapter", () => {
     expect(result.pid).toEqual(expect.any(Number));
   });
 
+  it("keeps collecting output and resolves completion after startup returns running", async () => {
+    const adapter = new CommandWorkerAdapter(
+      process.execPath,
+      [
+        "-e",
+        [
+          "process.stdin.resume();",
+          "process.stdin.on('end', () => {",
+          "  console.log('resume id: long-running-1');",
+          "  setTimeout(() => {",
+          "    console.error('final stderr line');",
+          "    console.log('final stdout line');",
+          "    process.exit(0);",
+          "  }, 250);",
+          "});"
+        ].join(" ")
+      ],
+      100
+    );
+
+    const result = await adapter.start({
+      goalTitle: "Track long Worker",
+      prompt: "Keep collecting after startup.",
+      cwd: process.cwd()
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.completion).toBeDefined();
+    if (result.completion === undefined) {
+      throw new Error("Expected long-running Worker result to include completion");
+    }
+
+    const completion = await result.completion;
+
+    expect(completion).toMatchObject({
+      status: "completed",
+      output: expect.stringContaining("final stdout line")
+    });
+    expect(completion.output).toContain("resume id: long-running-1");
+    expect(completion.output).toContain("final stderr line");
+  });
+
+  it("resolves long-running completion as failed when the process exits non-zero", async () => {
+    const adapter = new CommandWorkerAdapter(
+      process.execPath,
+      [
+        "-e",
+        [
+          "process.stdin.resume();",
+          "process.stdin.on('end', () => {",
+          "  console.log('resume id: long-running-fail');",
+          "  setTimeout(() => {",
+          "    console.error('late failure');",
+          "    process.exit(7);",
+          "  }, 250);",
+          "});"
+        ].join(" ")
+      ],
+      100
+    );
+
+    const result = await adapter.start({
+      goalTitle: "Track failed Worker",
+      prompt: "Keep collecting after startup.",
+      cwd: process.cwd()
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.completion).toBeDefined();
+    if (result.completion === undefined) {
+      throw new Error("Expected long-running Worker result to include completion");
+    }
+
+    const completion = await result.completion;
+
+    expect(completion).toMatchObject({
+      status: "failed",
+      output: expect.stringContaining("late failure")
+    });
+    expect(completion.output).toContain("Worker process exited with code 7");
+  });
+
   it("passes configured arguments to the Worker command and displays them", async () => {
     const adapter = new CommandWorkerAdapter(process.execPath, [
       "-e",

@@ -35,7 +35,7 @@ The full product brief lives in [docs/product-brief.md](docs/product-brief.md).
 - The owner interacts primarily with the Steward; the Steward coordinates Worker Agents instead of asking the owner to manage many terminals.
 - When the owner sends a new instruction, the Steward should usually either spawn a named Worker Agent for a concrete task or route the update to an existing relevant Worker.
 - Keep Steward context compact: retain goals, decisions, the active Worker map, blockers, and verification results; delegate code reading, implementation, review, and testing to Workers where practical.
-- Every Worker task must have a human-readable Worker Name in the format `<project-name>-<worker-purpose>-<worker-start-time-string>`, such as `agent-fleet-compact-dashboard-ui-20260426T164821+0800` or `mahjong-project-readiness-20260426T164821+0800`.
+- Every Worker task must have a human-readable Worker Name in the format `<project-name>-<worker-purpose>-YYYYMMDDHHmm`, such as `agent-fleet-compact-dashboard-ui-202604261652` or `mahjong-project-readiness-202604261652`. Do not include `T`, seconds, or timezone in the Worker Name.
 - The Steward must put the Worker Name at the top of the Worker prompt and require the Worker to use that exact name as the heading of its final report.
 - If the underlying spawn system assigns a random nickname, that nickname is secondary; the explicit Worker Name is the source of truth.
 - The Steward should not stop merely because one subtask finished. It should ask what remains and continue with the next Worker or verification step unless blocked.

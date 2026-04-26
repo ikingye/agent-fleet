@@ -19,6 +19,12 @@ export interface WorkerStartResult {
   pid: number | null;
   status: Extract<WorkerSessionStatus, "running" | "completed" | "failed">;
   initialOutput: string;
+  completion?: Promise<WorkerCompletion>;
+}
+
+export interface WorkerCompletion {
+  status: Extract<WorkerSessionStatus, "completed" | "failed">;
+  output: string;
 }
 
 export interface WorkerAdapter {
@@ -151,6 +157,11 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
     });
     let output = "";
     let settled = false;
+    let completionSettled = false;
+    let complete!: (completion: WorkerCompletion) => void;
+    const completion = new Promise<WorkerCompletion>((resolveCompletion) => {
+      complete = resolveCompletion;
+    });
 
     const settle = (status: WorkerStartResult["status"], extraOutput = "") => {
       if (settled) {
@@ -167,7 +178,20 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
         resumeId: extractResumeId(initialOutput),
         pid: child.pid ?? null,
         status,
-        initialOutput
+        initialOutput,
+        completion: status === "running" ? completion : undefined
+      });
+    };
+
+    const settleCompletion = (status: WorkerCompletion["status"], extraOutput = "") => {
+      if (completionSettled) {
+        return;
+      }
+
+      completionSettled = true;
+      complete({
+        status,
+        output: `${output}${extraOutput}`
       });
     };
 
@@ -183,7 +207,9 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
       output += chunk.toString("utf8");
     });
     child.on("error", (error) => {
-      settle("failed", `\nWorker process failed to start: ${error.message}`);
+      const extraOutput = `\nWorker process failed to start: ${error.message}`;
+      settle("failed", extraOutput);
+      settleCompletion("failed", extraOutput);
     });
     child.on("close", (code, signal) => {
       const suffix =
@@ -191,6 +217,7 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
           ? ""
           : `\nWorker process exited with ${code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`}`;
       settle(code === 0 ? "completed" : "failed", suffix);
+      settleCompletion(code === 0 ? "completed" : "failed", suffix);
     });
     child.stdin.end(input.prompt);
   });

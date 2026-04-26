@@ -200,6 +200,17 @@ function buildDeterministicStewardResponse(
   return pieces.join(" ");
 }
 
+function localWorkerDashboard(dashboard: DashboardData): DashboardData {
+  return {
+    ...dashboard,
+    workerSessions: dashboard.workerSessions.filter((session) => session.hostId === null || session.hostId === "local")
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 export async function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const store = await JsonControlPlaneStore.open(options.statePath ?? defaultStatePath());
@@ -233,11 +244,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.get("/api/recovery", async () => buildStewardRecoveryReport(await store.dashboard()));
 
   app.post("/api/recovery/reconcile", async () => {
-    const dashboard = await store.dashboard();
-    const localDashboard: DashboardData = {
-      ...dashboard,
-      workerSessions: dashboard.workerSessions.filter((session) => session.hostId === null || session.hostId === "local")
-    };
+    const localDashboard = localWorkerDashboard(await store.dashboard());
 
     return reconcileWorkerSessions({
       dashboard: localDashboard,
@@ -246,6 +253,33 @@ export async function createApp(options: CreateAppOptions = {}) {
         return store.updateWorkerSessionStatus(input);
       }
     });
+  });
+
+  app.post("/api/steward/autonomy/run", async () => {
+    const localDashboard = localWorkerDashboard(await store.dashboard());
+    const supervisedSessions = localDashboard.workerSessions.filter(
+      (session) => session.status === "starting" || session.status === "running"
+    );
+    const result = await reconcileWorkerSessions({
+      dashboard: localDashboard,
+      probeProcess: options.workerProcessProbe ?? probeLocalWorkerProcess,
+      updateWorkerSessionStatus(input) {
+        return store.updateWorkerSessionStatus(input);
+      }
+    });
+    const checkedLabel = result.checked === 1 ? "Worker session" : "Worker sessions";
+    const checkpoint = await store.recordStewardCheckpoint({
+      reason: "manual",
+      summary: `Autonomy reconcile checked ${result.checked} ${checkedLabel} and updated ${result.updated}.`,
+      nextAction:
+        result.staleSessionIds.length === 0
+          ? "Continue monitoring Worker sessions; no new Worker Agent was dispatched."
+          : `Review stale Worker sessions: ${result.staleSessionIds.join(", ")}. No new Worker Agent was dispatched.`,
+      goalIds: uniqueStrings(supervisedSessions.map((session) => session.goalId)),
+      workerSessionIds: supervisedSessions.map((session) => session.id)
+    });
+
+    return { result, checkpoint };
   });
 
   app.post("/api/goals", async (request) => {

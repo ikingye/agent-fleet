@@ -86,6 +86,12 @@ export class StewardRuntime {
       status: workerResult.status,
       lastOutput: workerResult.initialOutput
     });
+    this.attachWorkerCompletionHandler({
+      completion: workerResult.completion,
+      goalId: goal.id,
+      goalTitle: goal.title,
+      workerSessionId: session.id
+    });
 
     plannedWorktree ??= planWorktree({
       projectName: goal.projectName,
@@ -177,6 +183,37 @@ export class StewardRuntime {
       "Report blockers, resume ids, test results, and important decisions back to the Steward Agent."
     ].join("\n");
   }
+
+  private attachWorkerCompletionHandler(input: {
+    completion: Awaited<ReturnType<WorkerAdapter["start"]>>["completion"];
+    goalId: string;
+    goalTitle: string;
+    workerSessionId: string;
+  }): void {
+    if (input.completion === undefined) {
+      return;
+    }
+
+    void input.completion
+      .then(async (completion) => {
+        await this.options.store.updateWorkerSessionStatus({
+          workerSessionId: input.workerSessionId,
+          status: completion.status,
+          lastOutput: completion.output
+        });
+        await this.options.store.updateGoalStatus(input.goalId, goalStatusForWorkerStatus(completion.status));
+        await this.options.store.recordStewardCheckpoint({
+          reason: "recovery",
+          summary: `Worker session ${input.workerSessionId} ${completion.status} for goal: ${input.goalTitle}`,
+          nextAction: buildCompletionNextAction(input.workerSessionId, completion.status, completion.output),
+          goalIds: [input.goalId],
+          workerSessionIds: [input.workerSessionId]
+        });
+      })
+      .catch((error: unknown) => {
+        console.error("Worker completion handler failed", error);
+      });
+  }
 }
 
 function goalStatusForWorkerStatus(status: "running" | "completed" | "failed") {
@@ -226,4 +263,22 @@ function summarizeWorkerOutput(output: string): string {
     .join(" ");
 
   return oneLine.length > 240 ? `${oneLine.slice(0, 237)}...` : oneLine;
+}
+
+function buildCompletionNextAction(
+  workerSessionId: string,
+  status: "completed" | "failed",
+  output: string
+): string {
+  const summary = summarizeWorkerOutput(output);
+
+  if (status === "completed") {
+    return summary === ""
+      ? `Review completed Worker session ${workerSessionId} and decide the next owner-facing step.`
+      : `Review completed Worker session ${workerSessionId}: ${summary}`;
+  }
+
+  return summary === ""
+    ? `Review failed Worker session ${workerSessionId} and decide whether to resume, correct, or ask the owner.`
+    : `Review failed Worker session ${workerSessionId}: ${summary}`;
 }

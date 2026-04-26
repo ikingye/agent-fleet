@@ -11,7 +11,7 @@ The project is not open source yet. It is maintained with public-project hygiene
 agent-fleet removes the human bottleneck from multi-agent development:
 
 - One Steward Agent becomes the only human-facing interface.
-- Worker Agents such as Codex or Claude receive explicit Worker Names from the Steward, such as `agent-fleet-compact-dashboard-ui-20260426T164821+0800`, and report back under that same heading.
+- Worker Agents such as Codex or Claude receive explicit Worker Names from the Steward, such as `agent-fleet-compact-dashboard-ui-202604261652`, and report back under that same heading. Random spawn nicknames remain secondary.
 - Conversation history, goals, decisions, corrections, checkpoints, resume ids, process ids, Worker sessions, and project memory become durable state.
 - Every project goal has an explicit target `workspacePath`, for example `~/code/project/mahjong`; Worker cwd/project work happens there unless the owner explicitly asks to work on agent-fleet itself.
 - Parallel work can be coordinated through git worktrees instead of one terminal checkout.

@@ -525,6 +525,79 @@ describe("API routes", () => {
     }
   });
 
+  it("runs autonomy reconcile and records an auditable checkpoint without dispatching Workers", async () => {
+    let starts = 0;
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codexyoloproxy",
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      workerAdapter: {
+        kind: "codex",
+        async start(input) {
+          starts += 1;
+
+          return {
+            command: "codexyoloproxy",
+            cwd: input.cwd,
+            resumeId: "resume-autonomy",
+            pid: 5151,
+            status: "running",
+            initialOutput: "Worker started"
+          };
+        }
+      },
+      async workerProcessProbe(session) {
+        return {
+          status: "missing",
+          message: `pid ${session.pid} is no longer running`
+        };
+      }
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Autonomy reconcile",
+          body: "Reconcile existing Workers without dispatching new ones."
+        }
+      });
+      const before = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      const autonomyResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward/autonomy/run"
+      });
+      const body = autonomyResponse.json();
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(autonomyResponse.statusCode).toBe(200);
+      expect(starts).toBe(1);
+      expect(body.result).toEqual({
+        checked: 1,
+        updated: 1,
+        staleSessionIds: [before.workerSessions[0].id],
+        runningSessionIds: []
+      });
+      expect(body.checkpoint).toMatchObject({
+        reason: "manual",
+        summary: "Autonomy reconcile checked 1 Worker session and updated 1.",
+        goalIds: [before.goals[0].id],
+        workerSessionIds: [before.workerSessions[0].id]
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject(body.checkpoint);
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        status: "paused",
+        lastOutput: "pid 5151 is no longer running"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects invalid Steward checkpoint payloads", async () => {
     const app = await createApp({
       statePath: join(dir, "state.json"),

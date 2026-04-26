@@ -7,6 +7,32 @@ import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js"
 import { StewardRuntime } from "./stewardRuntime.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve;
+  });
+
+  return { promise, resolve };
+}
+
+async function waitForDashboard(
+  store: JsonControlPlaneStore,
+  predicate: (dashboard: Awaited<ReturnType<JsonControlPlaneStore["dashboard"]>>) => boolean
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const dashboard = await store.dashboard();
+
+    if (predicate(dashboard)) {
+      return dashboard;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  return store.dashboard();
+}
+
 class FakeWorkerAdapter implements WorkerAdapter {
   readonly kind = "codex";
   readonly startInputs: Array<{ goalTitle: string; prompt: string; cwd: string }> = [];
@@ -208,6 +234,130 @@ describe("StewardRuntime", () => {
       });
 
       expect(goal.status).toBe("completed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records background Worker completion and completes the goal", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-background-completed",
+              pid: 4545,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet"
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Finish in background",
+        body: "Update status when the Worker exits."
+      });
+
+      expect(goal.status).toBe("running");
+
+      completion.resolve({
+        status: "completed",
+        output: "Worker accepted prompt\nFinal report\nnpm run check passed"
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          state.goals[0].status === "completed" &&
+          state.workerSessions[0].status === "completed" &&
+          state.stewardCheckpoints.at(-1)?.reason === "recovery"
+      );
+
+      expect(dashboard.goals[0]).toMatchObject({ id: goal.id, status: "completed" });
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        status: "completed",
+        lastOutput: "Worker accepted prompt\nFinal report\nnpm run check passed"
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "recovery",
+        summary: `Worker session ${dashboard.workerSessions[0].id} completed for goal: Finish in background`,
+        goalIds: [goal.id],
+        workerSessionIds: [dashboard.workerSessions[0].id]
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records background Worker failure and blocks the goal", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "failed"; output: string }>();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-background-failed",
+              pid: 4646,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet"
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Fail in background",
+        body: "Update status when the Worker exits."
+      });
+
+      completion.resolve({
+        status: "failed",
+        output: "Worker accepted prompt\nTests failed"
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          state.goals[0].status === "blocked" &&
+          state.workerSessions[0].status === "failed" &&
+          state.stewardCheckpoints.at(-1)?.reason === "recovery"
+      );
+
+      expect(dashboard.goals[0]).toMatchObject({ id: goal.id, status: "blocked" });
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        status: "failed",
+        lastOutput: "Worker accepted prompt\nTests failed"
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "recovery",
+        summary: `Worker session ${dashboard.workerSessions[0].id} failed for goal: Fail in background`,
+        goalIds: [goal.id],
+        workerSessionIds: [dashboard.workerSessions[0].id]
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
