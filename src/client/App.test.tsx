@@ -76,7 +76,28 @@ const dashboard = {
       updatedAt: "2026-04-26T00:00:00.000Z"
     }
   ],
-  events: []
+  events: [
+    {
+      id: "event-1",
+      type: "decision.recorded",
+      goalId: "goal-1",
+      decisionId: "decision-1",
+      workerSessionId: null,
+      message: "Steward recorded a medium-risk decision for human review.",
+      metadataJson: "{\"risk\":\"medium\"}",
+      createdAt: "2026-04-26T00:01:00.000Z"
+    },
+    {
+      id: "event-2",
+      type: "worker.started",
+      goalId: "goal-1",
+      decisionId: "decision-1",
+      workerSessionId: "worker-1",
+      message: "Worker Agent session started with resume id resume-1.",
+      metadataJson: "{\"resumeId\":\"resume-1\"}",
+      createdAt: "2026-04-26T00:02:00.000Z"
+    }
+  ]
 };
 
 function jsonResponse(value: unknown) {
@@ -125,6 +146,69 @@ describe("App", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
     expect(screen.getByText("worker@remote-build-1.internal")).toBeInTheDocument();
     expect(screen.getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
+  });
+
+  it("registers a remote execution node and refreshes the dashboard", async () => {
+    const refreshedDashboard = {
+      ...dashboard,
+      executionNodes: [
+        ...dashboard.executionNodes,
+        {
+          id: "node-2",
+          name: "mac-mini-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: "worker@mac-mini.local",
+          workRoot: "/Users/worker/agent-fleet",
+          proxyUrl: "http://127.0.0.1:1080",
+          createdAt: "2026-04-26T00:03:00.000Z",
+          updatedAt: "2026-04-26T00:03:00.000Z"
+        }
+      ]
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(dashboard))
+      .mockResolvedValueOnce(jsonResponse(refreshedDashboard.executionNodes[1]))
+      .mockResolvedValueOnce(jsonResponse(refreshedDashboard));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Remote node name"), "mac-mini-builder");
+    await user.type(screen.getByLabelText("SSH host"), "worker@mac-mini.local");
+    await user.type(screen.getByLabelText("Work root"), "/Users/worker/agent-fleet");
+    await user.type(screen.getByLabelText("Proxy URL"), "http://127.0.0.1:1080");
+    await user.selectOptions(screen.getByLabelText("Remote node status"), "ready");
+    await user.click(screen.getByRole("button", { name: "Register node" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/execution-nodes",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          name: "mac-mini-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: "worker@mac-mini.local",
+          workRoot: "/Users/worker/agent-fleet",
+          proxyUrl: "http://127.0.0.1:1080"
+        })
+      })
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/dashboard");
+    expect(await screen.findByText("mac-mini-builder")).toBeInTheDocument();
+  });
+
+  it("renders recent control-plane audit events", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Events / Audit" })).toBeInTheDocument();
+    expect(screen.getByText("decision.recorded")).toBeInTheDocument();
+    expect(screen.getByText("Steward recorded a medium-risk decision for human review.")).toBeInTheDocument();
+    expect(screen.getByText("worker.started")).toBeInTheDocument();
+    expect(screen.getByText("Worker Agent session started with resume id resume-1.")).toBeInTheDocument();
   });
 
   it("submits a new goal to the Steward Agent", async () => {

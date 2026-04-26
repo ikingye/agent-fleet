@@ -1,4 +1,4 @@
-import type { DashboardData, DecisionCorrection, Goal } from "../shared/types.js";
+import type { DashboardData, DecisionCorrection, ExecutionNode, Goal } from "../shared/types.js";
 
 const emptyDashboard: DashboardData = {
   goals: [],
@@ -16,6 +16,8 @@ export interface CreateGoalPayload {
   title: string;
   body: string;
 }
+
+export type RegisterExecutionNodePayload = Omit<ExecutionNode, "id" | "createdAt" | "updatedAt">;
 
 export async function fetchDashboard(): Promise<DashboardData> {
   const response = await fetch("/api/dashboard");
@@ -70,4 +72,20 @@ export async function correctDecision(decisionId: string, body: string): Promise
   }
 
   return response.json() as Promise<DecisionCorrection>;
+}
+
+export async function registerExecutionNode(payload: RegisterExecutionNodePayload): Promise<ExecutionNode> {
+  const response = await fetch("/api/execution-nodes", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to register execution node.");
+  }
+
+  return response.json() as Promise<ExecutionNode>;
 }

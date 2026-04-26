@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
-import type { DashboardData, StewardDecision } from "../shared/types.js";
-import { correctDecision, createGoal, fetchDashboard } from "./api.js";
+import type { DashboardData, ExecutionNode, StewardDecision } from "../shared/types.js";
+import { correctDecision, createGoal, fetchDashboard, registerExecutionNode } from "./api.js";
 
 const emptyDashboard: DashboardData = {
   goals: [],
@@ -25,11 +25,20 @@ function resumeCommand(command: string, resumeId: string): string {
   return `${command} resume ${resumeId}`;
 }
 
+function formatEventTime(timestamp: string): string {
+  return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, " UTC").replace(/Z$/, " UTC");
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard);
   const [projectName, setProjectName] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
   const [goalBody, setGoalBody] = useState("");
+  const [nodeName, setNodeName] = useState("");
+  const [nodeSshHost, setNodeSshHost] = useState("");
+  const [nodeWorkRoot, setNodeWorkRoot] = useState("");
+  const [nodeProxyUrl, setNodeProxyUrl] = useState("");
+  const [nodeStatus, setNodeStatus] = useState<ExecutionNode["status"]>("unknown");
   const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const activeDecisions = useMemo(
@@ -45,6 +54,7 @@ export function App() {
     [dashboard.workerSessions]
   );
   const remoteNodes = useMemo(() => dashboard.executionNodes.filter((node) => node.kind === "remote"), [dashboard.executionNodes]);
+  const recentEvents = useMemo(() => [...dashboard.events].slice(-8).reverse(), [dashboard.events]);
   const memoryCount = dashboard.memories.length;
 
   async function refresh() {
@@ -105,6 +115,29 @@ export function App() {
       await refresh();
     } catch (correctionError) {
       setError(correctionError instanceof Error ? correctionError.message : "Failed to send correction.");
+    }
+  }
+
+  async function submitRemoteNode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    try {
+      await registerExecutionNode({
+        name: nodeName.trim(),
+        kind: "remote",
+        status: nodeStatus,
+        sshHost: nodeSshHost.trim() === "" ? null : nodeSshHost.trim(),
+        workRoot: nodeWorkRoot.trim(),
+        proxyUrl: nodeProxyUrl.trim() === "" ? null : nodeProxyUrl.trim()
+      });
+      setNodeName("");
+      setNodeSshHost("");
+      setNodeWorkRoot("");
+      setNodeProxyUrl("");
+      setNodeStatus("unknown");
+      await refresh();
+    } catch (nodeError) {
+      setError(nodeError instanceof Error ? nodeError.message : "Failed to register execution node.");
     }
   }
 
@@ -308,6 +341,48 @@ export function App() {
             <p className="eyebrow">Remote Capacity</p>
             <h2>Remote Nodes</h2>
           </div>
+          <form className="node-form" onSubmit={(event) => void submitRemoteNode(event)}>
+            <input
+              aria-label="Remote node name"
+              onChange={(event) => setNodeName(event.target.value)}
+              placeholder="name"
+              required
+              type="text"
+              value={nodeName}
+            />
+            <input
+              aria-label="SSH host"
+              onChange={(event) => setNodeSshHost(event.target.value)}
+              placeholder="ssh user@host"
+              type="text"
+              value={nodeSshHost}
+            />
+            <input
+              aria-label="Work root"
+              onChange={(event) => setNodeWorkRoot(event.target.value)}
+              placeholder="/work/root"
+              required
+              type="text"
+              value={nodeWorkRoot}
+            />
+            <input
+              aria-label="Proxy URL"
+              onChange={(event) => setNodeProxyUrl(event.target.value)}
+              placeholder="proxy URL"
+              type="url"
+              value={nodeProxyUrl}
+            />
+            <select
+              aria-label="Remote node status"
+              onChange={(event) => setNodeStatus(event.target.value as ExecutionNode["status"])}
+              value={nodeStatus}
+            >
+              <option value="unknown">unknown</option>
+              <option value="ready">ready</option>
+              <option value="offline">offline</option>
+            </select>
+            <button type="submit">Register node</button>
+          </form>
           <div className="item-list">
             {remoteNodes.length === 0 ? (
               <p className="empty-copy">No remote execution nodes registered.</p>
@@ -336,6 +411,48 @@ export function App() {
                     </dl>
                   </div>
                   <span className={`pill status-${node.status}`}>{node.status}</span>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="panel events-panel">
+          <div className="panel-heading">
+            <p className="eyebrow">Control Plane</p>
+            <h2>Events / Audit</h2>
+          </div>
+          <div className="item-list">
+            {recentEvents.length === 0 ? (
+              <p className="empty-copy">No control-plane events recorded.</p>
+            ) : (
+              recentEvents.map((event) => (
+                <article className="event-row" key={event.id}>
+                  <div className="event-head">
+                    <h3>{event.type}</h3>
+                    <time dateTime={event.createdAt}>{formatEventTime(event.createdAt)}</time>
+                  </div>
+                  <p>{event.message}</p>
+                  <dl className="event-links">
+                    {event.goalId ? (
+                      <div>
+                        <dt>goal</dt>
+                        <dd>{event.goalId}</dd>
+                      </div>
+                    ) : null}
+                    {event.decisionId ? (
+                      <div>
+                        <dt>decision</dt>
+                        <dd>{event.decisionId}</dd>
+                      </div>
+                    ) : null}
+                    {event.workerSessionId ? (
+                      <div>
+                        <dt>worker</dt>
+                        <dd>{event.workerSessionId}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
                 </article>
               ))
             )}

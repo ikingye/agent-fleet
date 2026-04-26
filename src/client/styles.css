@@ -15,6 +15,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -148,6 +149,7 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.events-panel,
 .worktree-panel {
   grid-column: span 2;
 }
@@ -165,14 +167,37 @@ h3 {
 }
 
 .stack-form input,
+.stack-form select,
 .stack-form textarea,
-.correction-box textarea {
+.correction-box textarea,
+.node-form input,
+.node-form select {
   width: 100%;
   border: 1px solid #cad5d0;
   border-radius: 6px;
   padding: 11px 12px;
   background: #ffffff;
   color: #182126;
+}
+
+.node-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  border-bottom: 1px solid #e3e9e6;
+  padding: 12px 14px;
+}
+
+.node-form input,
+.node-form select {
+  min-width: 0;
+  padding: 9px 10px;
+  font-size: 13px;
+}
+
+.node-form button {
+  grid-column: 1 / -1;
+  min-height: 36px;
 }
 
 .stack-form textarea {
@@ -192,7 +217,8 @@ h3 {
 }
 
 .item-row,
-.decision-row {
+.decision-row,
+.event-row {
   min-width: 0;
   border: 1px solid #e3e9e6;
   border-radius: 7px;
@@ -208,7 +234,8 @@ h3 {
 }
 
 .item-row p,
-.decision-row p {
+.decision-row p,
+.event-row p {
   margin-bottom: 0;
   color: #61716c;
   font-size: 13px;
@@ -216,7 +243,8 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-.decision-row {
+.decision-row,
+.event-row {
   display: grid;
   gap: 12px;
 }
@@ -375,11 +403,65 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.event-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.event-head h3 {
+  margin-bottom: 0;
+  color: #182126;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.event-head time {
+  color: #61716c;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.event-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 0;
+}
+
+.event-links div {
+  display: inline-flex;
+  min-width: 0;
+  gap: 5px;
+  border: 1px solid #e3e9e6;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.event-links dt {
+  color: #61716c;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.event-links dd {
+  margin: 0;
+  color: #384843;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 980px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
+  .events-panel,
   .worktree-panel,
   .memory-panel {
     grid-column: auto;
