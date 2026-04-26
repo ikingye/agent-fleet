@@ -1238,6 +1238,66 @@ describe("API routes", () => {
     }
   });
 
+  it("runs remote onboarding readiness checks for a registered execution node", async () => {
+    const remoteRunner = new CapturingRemoteCommandRunner({
+      exitCode: 0,
+      stdout: [
+        "AF_CHECK\tssh\tpass\tSSH command execution succeeded.",
+        "AF_CHECK\tworkRoot\tpass\tRemote work directory structure is writable.",
+        "AF_CHECK\tcodex\tpass\tCodex command is installed and logged in.",
+        "AF_CHECK\tgit\tpass\tGit command is available.",
+        "AF_CHECK\tgithubSsh\tpass\tGitHub SSH auth smoke succeeded.",
+        "AF_CHECK\tproxy\tpass\tConfigured proxy is reachable at 127.0.0.1:1080."
+      ].join("\n"),
+      stderr: ""
+    });
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codex",
+      workerAdapter: fakeWorkerAdapter,
+      remoteCommandRunner: remoteRunner
+    });
+
+    try {
+      const nodeResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "linux-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: "worker@linux-builder.internal",
+          workRoot: "/tmp/agent-fleet",
+          proxyUrl: "http://token:secret@127.0.0.1:1080"
+        }
+      });
+      const node = nodeResponse.json();
+      const onboardingResponse = await app.inject({
+        method: "POST",
+        url: `/api/execution-nodes/${node.id}/onboarding`
+      });
+
+      expect(onboardingResponse.statusCode).toBe(200);
+      expect(onboardingResponse.json()).toMatchObject({
+        nodeId: node.id,
+        ready: true,
+        normalizedWorkRoot: "/tmp/agent-fleet/work",
+        checks: [
+          { id: "ssh", status: "pass" },
+          { id: "workRoot", status: "pass" },
+          { id: "codex", status: "pass" },
+          { id: "git", status: "pass" },
+          { id: "githubSsh", status: "pass" },
+          { id: "proxy", status: "pass" }
+        ]
+      });
+      expect(JSON.stringify(onboardingResponse.json())).not.toContain("secret");
+      expect(remoteRunner.inputs[0].remoteScript).not.toContain("secret");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("exposes GitHub deploy-key lease acquire, list, renew, release, and expire endpoints", async () => {
     const app = await createApp({
       statePath: join(dir, "state.json"),
