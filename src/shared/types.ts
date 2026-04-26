@@ -11,6 +11,8 @@ export type ReviewStatus = "passed" | "failed" | "needs_attention";
 export type DeliveryStatus = "delivered" | "failed";
 export type StewardMessageRole = "owner" | "steward" | "worker" | "system";
 export type WorkerReportStatus = "DONE" | "DONE_WITH_CONCERNS" | "BLOCKED";
+export type GithubDeployKeyLeaseStatus = "active" | "released" | "stale";
+export type GithubDeployKeyCleanupStatus = "not_requested" | "pending" | "completed" | "failed";
 
 export interface Goal {
   id: string;
@@ -102,6 +104,28 @@ export interface ExecutionNode {
   tags: string[];
   capacity: number;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface GithubDeployKeyLease {
+  id: string;
+  projectName: string;
+  workspacePath: string;
+  repositoryUrl: string;
+  repositorySlug: string;
+  githubDeployKeyId: string | null;
+  publicKeyFingerprint: string;
+  localPrivateKeyPath: string;
+  remoteNodeId: string;
+  remotePrivateKeyPath: string;
+  activeWorkerSessionIds: string[];
+  refcount: number;
+  status: GithubDeployKeyLeaseStatus;
+  cleanupStatus: GithubDeployKeyCleanupStatus;
+  acquiredAt: string;
+  lastHeartbeatAt: string;
+  expiresAt: string;
+  releasedAt: string | null;
   updatedAt: string;
 }
 
@@ -220,6 +244,7 @@ export interface DashboardData {
   corrections: DecisionCorrection[];
   memories: MemoryEntry[];
   executionNodes: ExecutionNode[];
+  githubDeployKeyLeases: GithubDeployKeyLease[];
   worktreeAssignments: WorktreeAssignment[];
   stewardCheckpoints: StewardCheckpoint[];
   workerReports?: WorkerReport[];

@@ -19,6 +19,7 @@ const emptyDashboard: ClientDashboardData = {
   corrections: [],
   memories: [],
   executionNodes: [],
+  githubDeployKeyLeases: [],
   worktreeAssignments: [],
   stewardCheckpoints: [],
   workerReports: [],

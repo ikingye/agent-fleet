@@ -1,6 +1,6 @@
 # Remote Codex Bootstrap
 
-Remote Codex Workers run on disposable compute nodes. Treat the remote host as a replaceable executor: install runtime tools, authenticate Codex explicitly, let agent-fleet prepare a scratch workspace from git, run the Worker, and keep durable state in agent-fleet plus git.
+Remote Codex Workers run on disposable compute nodes. Treat the remote host as a replaceable executor: install runtime tools, authenticate Codex explicitly, let agent-fleet prepare scratch files under `/tmp/agent-fleet`, run the Worker, and keep durable state in agent-fleet plus git.
 
 ## Readiness Probe
 
@@ -100,47 +100,97 @@ Never include auth file contents in logs, Worker prompts, dashboard events, or f
 
 ## GitHub Access for Remote Workers
 
-Remote Workers are stateless, but the default remote provisioning path is not networkless. agent-fleet pushes a Worker ref to `origin`, the remote host clones or fetches that ref, and the remote Worker later pushes a result ref. For private GitHub repositories, the remote host needs its own GitHub credential with read and write access to the target repository.
+Remote Workers are stateless, but the default remote provisioning path is not networkless. agent-fleet pushes a Worker ref to `origin`, the remote host clones or fetches that ref, and the remote Worker later pushes a result ref. For private GitHub repositories, the remote host needs an ephemeral GitHub credential with read and write access to the target repository.
 
 Recommended credential choices:
 
-- Best for one repository: a GitHub deploy key created for this remote Worker pool, added to the repository with write access.
+- Best for one repository: one project/repo-level GitHub deploy key shared by all Workers for that repo through Steward-managed leases.
 - Best for several private repositories: a dedicated machine user with its own SSH key and narrowly scoped repository access.
+- Best for app-managed multi-repo access: a GitHub App installation with explicit repository grants.
 - Acceptable for interactive setup: GitHub CLI device login on the remote host if the organization allows it.
 - Avoid: copying the owner's personal private SSH key to the remote host. Do not paste private keys into logs, Worker prompts, dashboard notes, shell history, or final reports.
 
-Generate a dedicated SSH key on the remote host, or copy only an owner-approved deploy key:
+GitHub deploy keys are repository scoped: the same deploy key cannot be attached to multiple repositories. For multi-repo work, use a machine user or GitHub App instead of trying to reuse one deploy key across repos.
+
+### Steward-Managed Deploy-Key Leases
+
+Each project/repo should have at most one shared deploy key by default. The durable private key source lives in the local target project workspace under an ignored path, for example:
+
+```text
+<workspacePath>/.agent-fleet/secrets/<repo-slug>/github-deploy-key
+<workspacePath>/.agent-fleet/secrets/<repo-slug>/github-deploy-key.pub
+```
+
+Use a stable `<repo-slug>` such as `owner-agent-fleet`. Before generating or placing key material, confirm the target repository ignores local control-plane secrets:
+
+```gitignore
+.agent-fleet/
+```
+
+Do not commit `.agent-fleet/secrets`, private keys, public/private key fingerprints tied to secrets policy, copied SSH config fragments, or smoke-test logs containing authentication details.
+
+The owner must explicitly authorize any operation that grants or revokes repository access:
+
+- generating or importing the project deploy key;
+- adding the public key to GitHub as a repository deploy key, especially with write access;
+- rotating the key;
+- deleting the GitHub deploy key from the repository.
+
+Workers must not create, add, rotate, or delete GitHub deploy keys. The Steward/control-plane owns the lease registry and cleanup workflow. A Worker only receives a prepared remote environment after the Steward has acquired a lease.
+
+Recommended local key preparation, after owner authorization:
 
 ```sh
-ssh aicp-hhht-231 '
-  umask 077
-  mkdir -p ~/.ssh
-  test -f ~/.ssh/id_ed25519_agent_fleet_github ||
-    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_agent_fleet_github -N "" -C "agent-fleet remote worker $(hostname)"
-  cat ~/.ssh/id_ed25519_agent_fleet_github.pub
-'
+cd /path/to/project-workspace
+repo_slug="OWNER-REPO"
+install -d -m 700 ".agent-fleet/secrets/$repo_slug"
+test -f ".agent-fleet/secrets/$repo_slug/github-deploy-key" ||
+  ssh-keygen -t ed25519 \
+    -f ".agent-fleet/secrets/$repo_slug/github-deploy-key" \
+    -N "" \
+    -C "agent-fleet deploy key $repo_slug"
+chmod 600 ".agent-fleet/secrets/$repo_slug/github-deploy-key"
+chmod 644 ".agent-fleet/secrets/$repo_slug/github-deploy-key.pub"
+cat ".agent-fleet/secrets/$repo_slug/github-deploy-key.pub"
 ```
 
 Add the printed public key to GitHub:
 
-- Repository deploy key: GitHub repository -> Settings -> Deploy keys -> Add deploy key -> enable write access.
+- Repository deploy key: GitHub repository -> Settings -> Deploy keys -> Add deploy key -> enable write access only if remote Workers must push result refs.
 - Machine user: add the public key to the machine user's GitHub account, then grant that user the minimum repository access required.
 
-Configure the remote host to use the dedicated key for GitHub and pin GitHub host keys without printing secrets:
+For every remote dispatch that needs GitHub access, the Steward should:
+
+1. Acquire or renew the repo/node lease in local control-plane state.
+2. Copy the local ignored private key to an ephemeral remote path under `/tmp/agent-fleet/keys/<repo-slug>/github-deploy-key`.
+3. Set remote permissions to `0700` on directories and `0600` on the private key.
+4. Configure the git operation to use that key without writing durable remote SSH config.
+5. Heartbeat the lease while the Worker is active.
+6. Release the Worker session from the lease on normal exit.
+7. When refcount reaches zero, or when the lease expires after TTL, remove the remote key copy and mark cleanup complete or failed in the control-plane audit record.
+
+Remote install example:
+
+```sh
+ssh aicp-hhht-231 '
+  umask 077
+  repo_slug="OWNER-REPO"
+  install -d -m 700 "/tmp/agent-fleet/keys/$repo_slug"
+  install -d -m 700 "/tmp/agent-fleet/work"
+  install -d -m 700 "/tmp/agent-fleet/runs"
+  test ! -e "/tmp/agent-fleet/keys/$repo_slug/github-deploy-key" ||
+    chmod 600 "/tmp/agent-fleet/keys/$repo_slug/github-deploy-key"
+'
+```
+
+Pin GitHub host keys without printing secrets:
 
 ```sh
 ssh aicp-hhht-231 '
   umask 077
   mkdir -p ~/.ssh
-  touch ~/.ssh/config ~/.ssh/known_hosts
-  chmod 600 ~/.ssh/config ~/.ssh/known_hosts
-  grep -q "Host github.com" ~/.ssh/config || cat >> ~/.ssh/config <<EOF
-Host github.com
-  HostName github.com
-  User git
-  IdentityFile ~/.ssh/id_ed25519_agent_fleet_github
-  IdentitiesOnly yes
-EOF
+  touch ~/.ssh/known_hosts
+  chmod 600 ~/.ssh/known_hosts
   ssh-keygen -F github.com >/dev/null || ssh-keyscan github.com >> ~/.ssh/known_hosts
 '
 ```
@@ -148,8 +198,13 @@ EOF
 Verify authentication without revealing secrets:
 
 ```sh
-ssh aicp-hhht-231 'ssh -T git@github.com'
-ssh aicp-hhht-231 'git ls-remote git@github.com:OWNER/REPO.git HEAD'
+ssh aicp-hhht-231 '
+  ssh -i /tmp/agent-fleet/keys/OWNER-REPO/github-deploy-key -o IdentitiesOnly=yes -T git@github.com
+'
+ssh aicp-hhht-231 '
+  GIT_SSH_COMMAND="ssh -i /tmp/agent-fleet/keys/OWNER-REPO/github-deploy-key -o IdentitiesOnly=yes" \
+    git ls-remote git@github.com:OWNER/REPO.git HEAD
+'
 ```
 
 `ssh -T git@github.com` usually exits with status `1` after printing a successful authentication greeting because GitHub does not provide shell access. Treat the greeting as success; treat permission denied or unknown key output as a blocker.
@@ -159,8 +214,11 @@ Verify write access by pushing and deleting a scratch branch. Use a test reposit
 ```sh
 ssh aicp-hhht-231 '
   set -eu
-  scratch_dir=$(mktemp -d)
+  umask 077
+  install -d -m 700 /tmp/agent-fleet/runs
+  scratch_dir=$(mktemp -d /tmp/agent-fleet/runs/github-auth-smoke.XXXXXX)
   branch="agent-fleet/remote-auth-smoke/$(hostname)-$(date +%Y%m%d%H%M%S)"
+  export GIT_SSH_COMMAND="ssh -i /tmp/agent-fleet/keys/OWNER-REPO/github-deploy-key -o IdentitiesOnly=yes"
   git clone --depth 1 git@github.com:OWNER/REPO.git "$scratch_dir/repo"
   cd "$scratch_dir/repo"
   git switch -c "$branch"
@@ -171,6 +229,8 @@ ssh aicp-hhht-231 '
   rm -rf "$scratch_dir"
 '
 ```
+
+Lease records should include the GitHub deploy key id if known, public key fingerprint, repository URL/slug, remote node id, local private key path, remote private key path, active Worker session ids, refcount, `lastHeartbeatAt`, `expiresAt`, and cleanup status. Lease acquire/release must be serialized by the Steward/control-plane. A Worker crash is handled by TTL expiry: stale leases are marked `stale`, their active session list is cleared, cleanup becomes `pending`, and the Steward attempts to delete only the ephemeral remote key copy. Deleting the GitHub deploy key from the repository remains an owner-authorized rotation or decommissioning action.
 
 Optional HTTPS and proxy checks are useful when SSH works locally but the remote network has filtered access:
 
@@ -215,7 +275,7 @@ When registering the execution node, set `proxyUrl` to the remote-visible forwar
   "kind": "remote",
   "status": "ready",
   "sshHost": "aicp-hhht-231",
-  "workRoot": "/root/agent-fleet-workspaces",
+  "workRoot": "/tmp/agent-fleet/work",
   "proxyUrl": "http://127.0.0.1:1080",
   "tags": ["remote", "linux", "china-network", "high-cpu"],
   "capacity": 2
@@ -241,7 +301,7 @@ agent-fleet prepares remote workspaces conservatively before launching Codex:
 - Git is the preferred sync mechanism. The local target workspace must be inside a git repository with `remote.origin.url`.
 - The remote checkout is scratch/cache. Do not rely on unpushed remote files as durable state.
 - Local uncommitted files are not copied, and agent-fleet does not push commits.
-- Codex auth, API keys, SSH keys, and other secrets are not copied as part of workspace provisioning.
+- Codex auth and API keys are not copied as part of workspace provisioning. A project deploy key may be installed separately under `/tmp/agent-fleet/keys/<repo-slug>/` only after the Steward acquires a lease.
 - Non-empty remote directories that are not git checkouts block provisioning instead of being deleted.
 
 If provisioning blocks, fix the source-of-truth issue first: add a git origin, push required commits, authenticate the remote host to fetch that origin, or choose a local Worker for work that depends on uncommitted local state.

@@ -15,6 +15,7 @@ import type {
   ExecutionNode,
   Goal,
   GoalStatus,
+  GithubDeployKeyLease,
   MemoryEntry,
   MemoryScope,
   ReviewResult,
@@ -100,6 +101,38 @@ export interface CreateWorktreeAssignmentInput {
   branchName: string;
 }
 
+export interface AcquireGithubDeployKeyLeaseInput {
+  projectName: string;
+  workspacePath: string;
+  repositoryUrl: string;
+  repositorySlug: string;
+  githubDeployKeyId: string | null;
+  publicKeyFingerprint: string;
+  localPrivateKeyPath: string;
+  remoteNodeId: string;
+  remotePrivateKeyPath: string;
+  workerSessionId: string;
+  expiresAt: string;
+  now?: string;
+}
+
+export interface RenewGithubDeployKeyLeaseInput {
+  leaseId: string;
+  workerSessionId: string;
+  expiresAt: string;
+  now?: string;
+}
+
+export interface ReleaseGithubDeployKeyLeaseInput {
+  leaseId: string;
+  workerSessionId: string;
+  now?: string;
+}
+
+export interface ExpireGithubDeployKeyLeasesInput {
+  now?: string;
+}
+
 export interface RecordStewardCheckpointInput {
   reason: StewardCheckpointReason;
   summary: string;
@@ -180,6 +213,7 @@ function emptyState(): ControlPlaneState {
     corrections: [],
     memories: [],
     executionNodes: [],
+    githubDeployKeyLeases: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
     stewardMessages: [],
@@ -202,6 +236,7 @@ function parseState(raw: string): ControlPlaneState {
     corrections: parsed.corrections ?? [],
     memories: parsed.memories ?? [],
     executionNodes: (parsed.executionNodes ?? []).map(normalizeExecutionNode),
+    githubDeployKeyLeases: (parsed.githubDeployKeyLeases ?? []).map(normalizeGithubDeployKeyLease),
     worktreeAssignments: parsed.worktreeAssignments ?? [],
     stewardCheckpoints: parsed.stewardCheckpoints ?? [],
     stewardMessages: parsed.stewardMessages ?? [],
@@ -233,6 +268,20 @@ function normalizeExecutionNode(
   };
 }
 
+function normalizeGithubDeployKeyLease(
+  lease: GithubDeployKeyLease | (Omit<GithubDeployKeyLease, "refcount"> & { refcount?: number })
+): GithubDeployKeyLease {
+  const activeWorkerSessionIds = Array.isArray(lease.activeWorkerSessionIds)
+    ? lease.activeWorkerSessionIds.filter((id): id is string => typeof id === "string" && id.trim() !== "")
+    : [];
+
+  return {
+    ...lease,
+    activeWorkerSessionIds,
+    refcount: activeWorkerSessionIds.length
+  };
+}
+
 function normalizeTags(tags: unknown): string[] {
   if (!Array.isArray(tags)) {
     return [];
@@ -254,6 +303,35 @@ function normalizeCapacity(capacity: unknown): number {
   }
 
   return Math.max(1, Math.floor(capacity));
+}
+
+function addUniqueWorkerSession(lease: GithubDeployKeyLease, workerSessionId: string): void {
+  if (!lease.activeWorkerSessionIds.includes(workerSessionId)) {
+    lease.activeWorkerSessionIds.push(workerSessionId);
+  }
+
+  lease.refcount = lease.activeWorkerSessionIds.length;
+}
+
+function githubDeployKeyLeaseEventMetadata(lease: GithubDeployKeyLease): Record<string, unknown> {
+  return {
+    leaseId: lease.id,
+    projectName: lease.projectName,
+    workspacePath: lease.workspacePath,
+    repositoryUrl: lease.repositoryUrl,
+    repositorySlug: lease.repositorySlug,
+    githubDeployKeyId: lease.githubDeployKeyId,
+    publicKeyFingerprint: lease.publicKeyFingerprint,
+    localPrivateKeyPath: lease.localPrivateKeyPath,
+    remoteNodeId: lease.remoteNodeId,
+    remotePrivateKeyPath: lease.remotePrivateKeyPath,
+    activeWorkerSessionIds: lease.activeWorkerSessionIds,
+    refcount: lease.refcount,
+    status: lease.status,
+    cleanupStatus: lease.cleanupStatus,
+    expiresAt: lease.expiresAt,
+    releasedAt: lease.releasedAt
+  };
 }
 
 function legacyWorkspacePath(projectName: string): string {
@@ -299,6 +377,7 @@ export class JsonControlPlaneStore {
       corrections: [...this.state.corrections],
       memories: [...this.state.memories],
       executionNodes: [...this.state.executionNodes],
+      githubDeployKeyLeases: [...this.state.githubDeployKeyLeases],
       worktreeAssignments: [...this.state.worktreeAssignments],
       stewardCheckpoints: [...this.state.stewardCheckpoints],
       workerReports: [...this.state.workerReports],
@@ -560,6 +639,164 @@ export class JsonControlPlaneStore {
     await this.save();
 
     return assignment;
+  }
+
+  async acquireGithubDeployKeyLease(input: AcquireGithubDeployKeyLeaseInput): Promise<GithubDeployKeyLease> {
+    const session = this.findWorkerSession(input.workerSessionId);
+    this.findExecutionNode(input.remoteNodeId);
+
+    const timestamp = input.now ?? now();
+    const existing = this.state.githubDeployKeyLeases.find(
+      (lease) =>
+        lease.status === "active" &&
+        lease.projectName === input.projectName &&
+        lease.workspacePath === input.workspacePath &&
+        lease.repositoryUrl === input.repositoryUrl &&
+        lease.repositorySlug === input.repositorySlug &&
+        lease.publicKeyFingerprint === input.publicKeyFingerprint &&
+        lease.remoteNodeId === input.remoteNodeId
+    );
+
+    if (existing !== undefined) {
+      addUniqueWorkerSession(existing, input.workerSessionId);
+      existing.githubDeployKeyId = input.githubDeployKeyId;
+      existing.localPrivateKeyPath = input.localPrivateKeyPath;
+      existing.remotePrivateKeyPath = input.remotePrivateKeyPath;
+      existing.cleanupStatus = "not_requested";
+      existing.lastHeartbeatAt = timestamp;
+      existing.expiresAt = input.expiresAt;
+      existing.updatedAt = timestamp;
+      this.addEvent({
+        type: "github_deploy_key_lease.acquired",
+        goalId: session.goalId,
+        decisionId: session.decisionId,
+        workerSessionId: session.id,
+        message: `GitHub deploy-key lease acquired for ${existing.repositorySlug}`,
+        metadata: githubDeployKeyLeaseEventMetadata(existing)
+      });
+      await this.save();
+      return existing;
+    }
+
+    const lease: GithubDeployKeyLease = {
+      id: randomUUID(),
+      projectName: input.projectName,
+      workspacePath: input.workspacePath,
+      repositoryUrl: input.repositoryUrl,
+      repositorySlug: input.repositorySlug,
+      githubDeployKeyId: input.githubDeployKeyId,
+      publicKeyFingerprint: input.publicKeyFingerprint,
+      localPrivateKeyPath: input.localPrivateKeyPath,
+      remoteNodeId: input.remoteNodeId,
+      remotePrivateKeyPath: input.remotePrivateKeyPath,
+      activeWorkerSessionIds: [input.workerSessionId],
+      refcount: 1,
+      status: "active",
+      cleanupStatus: "not_requested",
+      acquiredAt: timestamp,
+      lastHeartbeatAt: timestamp,
+      expiresAt: input.expiresAt,
+      releasedAt: null,
+      updatedAt: timestamp
+    };
+
+    this.state.githubDeployKeyLeases.push(lease);
+    this.addEvent({
+      type: "github_deploy_key_lease.acquired",
+      goalId: session.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: session.id,
+      message: `GitHub deploy-key lease acquired for ${lease.repositorySlug}`,
+      metadata: githubDeployKeyLeaseEventMetadata(lease)
+    });
+    await this.save();
+
+    return lease;
+  }
+
+  async renewGithubDeployKeyLease(input: RenewGithubDeployKeyLeaseInput): Promise<GithubDeployKeyLease> {
+    const lease = this.findGithubDeployKeyLease(input.leaseId);
+    const session = this.findWorkerSession(input.workerSessionId);
+
+    if (!lease.activeWorkerSessionIds.includes(input.workerSessionId)) {
+      throw new Error(`Worker session ${input.workerSessionId} does not hold GitHub deploy-key lease ${lease.id}`);
+    }
+
+    const timestamp = input.now ?? now();
+    lease.lastHeartbeatAt = timestamp;
+    lease.expiresAt = input.expiresAt;
+    lease.updatedAt = timestamp;
+    this.addEvent({
+      type: "github_deploy_key_lease.renewed",
+      goalId: session.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: session.id,
+      message: `GitHub deploy-key lease renewed for ${lease.repositorySlug}`,
+      metadata: githubDeployKeyLeaseEventMetadata(lease)
+    });
+    await this.save();
+
+    return lease;
+  }
+
+  async releaseGithubDeployKeyLease(input: ReleaseGithubDeployKeyLeaseInput): Promise<GithubDeployKeyLease> {
+    const lease = this.findGithubDeployKeyLease(input.leaseId);
+    const session = this.findWorkerSession(input.workerSessionId);
+    const timestamp = input.now ?? now();
+
+    lease.activeWorkerSessionIds = lease.activeWorkerSessionIds.filter((id) => id !== input.workerSessionId);
+    lease.refcount = lease.activeWorkerSessionIds.length;
+    lease.updatedAt = timestamp;
+    if (lease.refcount === 0) {
+      lease.status = "released";
+      lease.cleanupStatus = "pending";
+      lease.releasedAt = timestamp;
+    }
+
+    this.addEvent({
+      type: "github_deploy_key_lease.released",
+      goalId: session.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: session.id,
+      message: `GitHub deploy-key lease released for ${lease.repositorySlug}`,
+      metadata: githubDeployKeyLeaseEventMetadata(lease)
+    });
+    await this.save();
+
+    return lease;
+  }
+
+  async expireGithubDeployKeyLeases(input: ExpireGithubDeployKeyLeasesInput = {}): Promise<{ expiredLeaseIds: string[] }> {
+    const timestamp = input.now ?? now();
+    const expiredLeaseIds: string[] = [];
+
+    for (const lease of this.state.githubDeployKeyLeases) {
+      if (lease.status !== "active" || Date.parse(lease.expiresAt) > Date.parse(timestamp)) {
+        continue;
+      }
+
+      lease.activeWorkerSessionIds = [];
+      lease.refcount = 0;
+      lease.status = "stale";
+      lease.cleanupStatus = "pending";
+      lease.releasedAt = timestamp;
+      lease.updatedAt = timestamp;
+      expiredLeaseIds.push(lease.id);
+      this.addEvent({
+        type: "github_deploy_key_lease.expired",
+        goalId: null,
+        decisionId: null,
+        workerSessionId: null,
+        message: `GitHub deploy-key lease expired for ${lease.repositorySlug}`,
+        metadata: githubDeployKeyLeaseEventMetadata(lease)
+      });
+    }
+
+    if (expiredLeaseIds.length > 0) {
+      await this.save();
+    }
+
+    return { expiredLeaseIds };
   }
 
   async recordStewardCheckpoint(input: RecordStewardCheckpointInput): Promise<StewardCheckpoint> {
@@ -938,6 +1175,15 @@ export class JsonControlPlaneStore {
     }
   }
 
+  private findExecutionNode(nodeId: string): ExecutionNode {
+    const node = this.state.executionNodes.find((item) => item.id === nodeId);
+    if (node === undefined) {
+      throw new Error(`Execution node not found: ${nodeId}`);
+    }
+
+    return node;
+  }
+
   private findDecision(decisionId: string): StewardDecision {
     const decision = this.state.decisions.find((item) => item.id === decisionId);
     if (decision === undefined) {
@@ -954,6 +1200,15 @@ export class JsonControlPlaneStore {
     }
 
     return session;
+  }
+
+  private findGithubDeployKeyLease(leaseId: string): GithubDeployKeyLease {
+    const lease = this.state.githubDeployKeyLeases.find((item) => item.id === leaseId);
+    if (lease === undefined) {
+      throw new Error(`GitHub deploy-key lease not found: ${leaseId}`);
+    }
+
+    return lease;
   }
 
   private addEvent(input: {

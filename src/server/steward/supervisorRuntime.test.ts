@@ -43,6 +43,7 @@ function dashboardWith(workerSessions: WorkerSession[], goals: Goal[] = []): Das
     corrections: [],
     memories: [],
     executionNodes: [],
+    githubDeployKeyLeases: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
     agentArtifacts: [],

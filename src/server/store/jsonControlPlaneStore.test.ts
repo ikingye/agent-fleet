@@ -463,4 +463,190 @@ describe("JsonControlPlaneStore", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("acquires, renews, releases, and expires shared GitHub deploy-key leases", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const node = await store.upsertExecutionNode({
+        name: "remote-build-1",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@remote-build-1.internal",
+        workRoot: "/tmp/agent-fleet/work",
+        proxyUrl: null,
+        tags: ["remote", "linux"],
+        capacity: 2
+      });
+      const goal = await store.createGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run remote Workers",
+        body: "Use a Steward-managed project deploy key for remote GitHub access."
+      });
+      const decision = await store.recordDecision({
+        goalId: goal.id,
+        workerSessionId: null,
+        title: "Lease project deploy key",
+        rationale: "Workers share one repo-scoped deploy key through the Steward registry.",
+        risk: "high",
+        confidence: 0.78,
+        reversible: true,
+        needsHumanReview: true,
+        status: "active",
+        actions: ["Acquire deploy-key lease before remote dispatch"]
+      });
+      const workerOne = await store.createWorkerSession({
+        goalId: goal.id,
+        decisionId: decision.id,
+        kind: "codex",
+        command: "codexyoloproxy",
+        cwd: "/tmp/agent-fleet/work/agent-fleet/agent-fleet",
+        pid: 1111,
+        hostId: node.id,
+        resumeId: "resume-one",
+        status: "running"
+      });
+      const workerTwo = await store.createWorkerSession({
+        goalId: goal.id,
+        decisionId: decision.id,
+        kind: "codex",
+        command: "codexyoloproxy",
+        cwd: "/tmp/agent-fleet/work/agent-fleet/agent-fleet-2",
+        pid: 2222,
+        hostId: node.id,
+        resumeId: "resume-two",
+        status: "running"
+      });
+
+      const firstLease = await store.acquireGithubDeployKeyLease({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        repositoryUrl: "git@github.com:owner/agent-fleet.git",
+        repositorySlug: "owner-agent-fleet",
+        githubDeployKeyId: "github-key-123",
+        publicKeyFingerprint: "SHA256:project-key",
+        localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+        remoteNodeId: node.id,
+        remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key",
+        workerSessionId: workerOne.id,
+        expiresAt: "2026-04-26T10:10:00.000Z",
+        now: "2026-04-26T10:00:00.000Z"
+      });
+      const sharedLease = await store.acquireGithubDeployKeyLease({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        repositoryUrl: "git@github.com:owner/agent-fleet.git",
+        repositorySlug: "owner-agent-fleet",
+        githubDeployKeyId: "github-key-123",
+        publicKeyFingerprint: "SHA256:project-key",
+        localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+        remoteNodeId: node.id,
+        remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key",
+        workerSessionId: workerTwo.id,
+        expiresAt: "2026-04-26T10:15:00.000Z",
+        now: "2026-04-26T10:05:00.000Z"
+      });
+
+      expect(sharedLease.id).toBe(firstLease.id);
+      expect(sharedLease).toMatchObject({
+        activeWorkerSessionIds: [workerOne.id, workerTwo.id],
+        refcount: 2,
+        status: "active",
+        cleanupStatus: "not_requested",
+        expiresAt: "2026-04-26T10:15:00.000Z",
+        lastHeartbeatAt: "2026-04-26T10:05:00.000Z"
+      });
+
+      const renewedLease = await store.renewGithubDeployKeyLease({
+        leaseId: sharedLease.id,
+        workerSessionId: workerOne.id,
+        expiresAt: "2026-04-26T10:30:00.000Z",
+        now: "2026-04-26T10:20:00.000Z"
+      });
+
+      expect(renewedLease).toMatchObject({
+        activeWorkerSessionIds: [workerOne.id, workerTwo.id],
+        refcount: 2,
+        expiresAt: "2026-04-26T10:30:00.000Z",
+        lastHeartbeatAt: "2026-04-26T10:20:00.000Z"
+      });
+
+      const stillShared = await store.releaseGithubDeployKeyLease({
+        leaseId: renewedLease.id,
+        workerSessionId: workerOne.id,
+        now: "2026-04-26T10:21:00.000Z"
+      });
+
+      expect(stillShared).toMatchObject({
+        activeWorkerSessionIds: [workerTwo.id],
+        refcount: 1,
+        status: "active",
+        cleanupStatus: "not_requested"
+      });
+
+      const released = await store.releaseGithubDeployKeyLease({
+        leaseId: renewedLease.id,
+        workerSessionId: workerTwo.id,
+        now: "2026-04-26T10:22:00.000Z"
+      });
+
+      expect(released).toMatchObject({
+        activeWorkerSessionIds: [],
+        refcount: 0,
+        status: "released",
+        cleanupStatus: "pending"
+      });
+
+      const staleLease = await store.acquireGithubDeployKeyLease({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        repositoryUrl: "git@github.com:owner/agent-fleet.git",
+        repositorySlug: "owner-agent-fleet",
+        githubDeployKeyId: "github-key-123",
+        publicKeyFingerprint: "SHA256:project-key",
+        localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+        remoteNodeId: node.id,
+        remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key",
+        workerSessionId: workerOne.id,
+        expiresAt: "2026-04-26T11:00:00.000Z",
+        now: "2026-04-26T10:50:00.000Z"
+      });
+      const cleanup = await store.expireGithubDeployKeyLeases({
+        now: "2026-04-26T11:01:00.000Z"
+      });
+      const reopened = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await reopened.dashboard();
+
+      expect(staleLease.id).not.toBe(released.id);
+      expect(cleanup.expiredLeaseIds).toEqual([staleLease.id]);
+      expect(dashboard.githubDeployKeyLeases).toEqual([
+        expect.objectContaining({
+          id: released.id,
+          refcount: 0,
+          status: "released",
+          cleanupStatus: "pending"
+        }),
+        expect.objectContaining({
+          id: staleLease.id,
+          activeWorkerSessionIds: [],
+          refcount: 0,
+          status: "stale",
+          cleanupStatus: "pending"
+        })
+      ]);
+      expect(dashboard.events.map((event) => event.type)).toEqual(
+        expect.arrayContaining([
+          "github_deploy_key_lease.acquired",
+          "github_deploy_key_lease.renewed",
+          "github_deploy_key_lease.released",
+          "github_deploy_key_lease.expired"
+        ])
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -61,6 +61,7 @@ function dashboard(overrides: Partial<DashboardData>): DashboardData {
     corrections: [],
     memories: [],
     executionNodes: [],
+    githubDeployKeyLeases: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
     workerReports: [],

@@ -99,6 +99,7 @@ function dashboardWith(overrides: Partial<DashboardData>): DashboardData {
     corrections: [],
     memories: [],
     executionNodes: [],
+    githubDeployKeyLeases: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
     agentArtifacts: [],

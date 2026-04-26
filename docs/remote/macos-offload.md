@@ -26,7 +26,7 @@ The remote command is a minimal `sh -lc` wrapper that changes to the requested r
 cd '<remote target workspace>' && exec env HTTPS_PROXY='<proxy url>' codex exec --json --sandbox workspace-write -
 ```
 
-Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata; business project code and UI still belong in the target workspace, not in the agent-fleet dashboard. Remote workspaces are disposable scratch space. The source of truth stays in git and the local control-plane state; remote files must not be treated as durable project state.
+Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata and should default to `/tmp/agent-fleet/work` on stateless remote servers. Business project code and UI still belong in the target workspace, not in the agent-fleet dashboard. Remote workspaces are disposable scratch space. The source of truth stays in git and the local control-plane state; remote files must not be treated as durable project state.
 
 When a ready remote node is selected, the Steward maps the target workspace to a deterministic remote cwd:
 
@@ -34,11 +34,21 @@ When a ready remote node is selected, the Steward maps the target workspace to a
 <execution node workRoot>/<project slug>/<workspace slug>
 ```
 
-For example, project `agent-fleet` with target workspace `~/code/project/agent-fleet` on a node whose `workRoot` is `/root/agent-fleet-workspaces` runs at:
+For example, project `agent-fleet` with target workspace `~/code/project/agent-fleet` on a node whose `workRoot` is `/tmp/agent-fleet/work` runs at:
 
 ```text
-/root/agent-fleet-workspaces/agent-fleet/agent-fleet
+/tmp/agent-fleet/work/agent-fleet/agent-fleet
 ```
+
+Remote keys, logs, and scratch artifacts follow the same stateless rule by default:
+
+```text
+/tmp/agent-fleet/keys/<repo-slug>/github-deploy-key
+/tmp/agent-fleet/runs/<worker-name>/
+/tmp/agent-fleet/work/<project-slug>/<workspace-slug>/
+```
+
+The Steward should create `/tmp/agent-fleet`, `keys`, `runs`, and `work` directories with `0700` permissions and private key files with `0600`. Remote copies are ephemeral and must be cleaned when the deploy-key lease refcount reaches zero or the lease expires. The durable source of deploy-key material remains the local project workspace's ignored `.agent-fleet/secrets/<repo-slug>/` directory.
 
 Behavior:
 
@@ -83,7 +93,7 @@ Recommended "add remote server" flow:
 
 1. Prepare SSH reachability from the Mac to the remote host, including any required proxy forwarding.
 2. Install and authenticate the Worker runtime, such as Codex CLI.
-3. Configure GitHub access on the remote host so stateless Workers can fetch and push Worker refs for private repositories. See [GitHub Access for Remote Workers](codex-bootstrap.md#github-access-for-remote-workers).
+3. Configure Steward-managed GitHub access so stateless Workers can fetch and push Worker refs for private repositories. See [GitHub Access for Remote Workers](codex-bootstrap.md#github-access-for-remote-workers).
 4. Verify the remote work root exists and is disposable scratch space.
 5. Register the execution node with `workRoot`, `proxyUrl`, tags, and capacity.
 6. Dispatch a small remote Worker only after SSH, Worker runtime auth, GitHub auth, proxy, and workspace provisioning have all passed.
@@ -98,7 +108,7 @@ curl -X POST http://127.0.0.1:8787/api/execution-nodes \
     "kind": "remote",
     "status": "unknown",
     "sshHost": "worker@mac-mini.local",
-    "workRoot": "/srv/agent-fleet-workspaces",
+    "workRoot": "/tmp/agent-fleet/work",
     "proxyUrl": "http://127.0.0.1:1080",
     "tags": ["remote", "linux", "high-cpu"],
     "capacity": 2
@@ -115,7 +125,7 @@ curl -X POST http://127.0.0.1:8787/api/execution-nodes \
     "kind": "remote",
     "status": "ready",
     "sshHost": "aicp-hhht-231",
-    "workRoot": "/root/agent-fleet-workspaces",
+    "workRoot": "/tmp/agent-fleet/work",
     "proxyUrl": "http://127.0.0.1:1080",
     "tags": ["remote", "linux", "china-network", "high-cpu"],
     "capacity": 2
@@ -143,7 +153,7 @@ Fields:
 | `kind` | Yes | `remote` for SSH-backed nodes, `local` for the control-plane host. |
 | `status` | Yes | `unknown`, `offline`, or `ready`. |
 | `sshHost` | For ready remote nodes | SSH target such as `worker@mac-mini.local`; use `null` for local nodes. |
-| `workRoot` | Yes | Absolute path where Worker sessions should run on that node. |
+| `workRoot` | Yes | Absolute scratch path where Worker sessions should run on that node. Defaults should use `/tmp/agent-fleet/work` for stateless remote servers. |
 | `proxyUrl` | No | Forwarded proxy URL visible from the remote process, or `null`. |
 | `tags` | No | Capability tags such as `remote`, `linux`, `gpu`, `high-cpu`, `china-network`, or `cuda`. Missing tags default to `[]` for old state. |
 | `capacity` | No | Maximum concurrent Worker sessions for this node. Missing capacity defaults to `1` for old state. |
@@ -174,13 +184,27 @@ Before launching an SSH-backed Worker, the Steward prepares the selected remote 
 - The Steward resolves `HEAD`, derives deterministic refs from the Worker Name, and pushes the Worker ref to `origin`.
 - Worker refs use `refs/heads/agent-fleet/workers/<worker-name>`.
 - Returned result refs use `refs/heads/agent-fleet/results/<worker-name>`.
-- The remote host is treated as stateless scratch space. It must have GitHub access for the repository, clones or fetches from `origin`, fetches the Worker ref, and checks out a local branch from `FETCH_HEAD`.
+- The remote host is treated as stateless scratch space. It must have Steward-provisioned ephemeral GitHub access for the repository, clones or fetches from `origin`, fetches the Worker ref, and checks out a local branch from `FETCH_HEAD`.
 - If the remote cwd exists but is non-empty and is not a git checkout, provisioning blocks instead of deleting or overwriting it.
 - If the local workspace is not in git, has no origin URL, is dirty, cannot push the Worker ref, or cannot prepare the remote checkout, provisioning records a clear blocked Worker session/checkpoint instead of pretending that the remote cwd is usable.
 
 After remote execution, the inbound sync path fetches the returned result ref from `origin` and checks it out to `agent-fleet/results/<worker-name>` for review. The review/merge Worker is responsible for deciding how that result branch is merged.
 
-The default path intentionally does not rsync project directories, copy local uncommitted changes, copy secrets, copy the owner's personal private SSH key, or clean remote disks. Prefer a repository deploy key with write access or a dedicated machine user SSH key for remote GitHub access. `rsync` is only a fallback for future workflows that explicitly opt out of Git-ref sync. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
+The default path intentionally does not rsync project directories, copy local uncommitted changes, copy the owner's personal private SSH key, or use durable remote project-secret paths. A project/repo deploy key may be copied from the local ignored workspace secret store to `/tmp/agent-fleet/keys/<repo-slug>/github-deploy-key` only after the Steward acquires a lease. Prefer one repository deploy key with write access per repo, or a dedicated machine user/GitHub App for multi-repo access. `rsync` is only a fallback for future workflows that explicitly opt out of Git-ref sync. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
+
+## Deploy-Key Lease Protocol
+
+The shared deploy-key lease model is:
+
+- One project/repo-level GitHub deploy key by default. Do not create per-Worker deploy keys.
+- Durable key material lives locally under `<workspacePath>/.agent-fleet/secrets/<repo-slug>/github-deploy-key`, covered by `.gitignore`.
+- Remote key copies live only under `/tmp/agent-fleet/keys/<repo-slug>/github-deploy-key`.
+- Lease records include GitHub deploy key id when known, public key fingerprint, repository URL/slug, remote node id, local private key path, remote private key path, active Worker session ids, refcount, heartbeat, expiry, and cleanup status.
+- Acquire is serialized by the Steward/control-plane before dispatch. Existing active repo/node leases add the Worker session id and increment refcount.
+- Workers heartbeat through the Steward. Missing heartbeat past TTL marks the lease `stale`, clears active session ids, sets cleanup `pending`, and triggers deletion of the remote key copy.
+- Release removes the Worker session id. Refcount zero marks cleanup `pending` and removes the ephemeral remote key copy.
+- Workers must not create, rotate, add, delete, or revoke GitHub deploy keys. Actual GitHub create/delete and write-access grants require explicit owner authorization.
+- Rotation creates or imports a new local ignored key, owner-authorizes adding its public key to GitHub, shifts new leases to the new fingerprint, drains old leases, deletes old remote copies, and only then owner-authorizes deleting the old GitHub deploy key.
 
 Owner-facing audit records include whether provisioning prepared the remote workspace or blocked Worker launch. When blocked, the Worker session is recorded as failed with command `remote workspace provisioning`, and the checkpoint explains what must be fixed, such as adding a git origin or preparing remote authentication.
 
