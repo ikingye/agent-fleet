@@ -602,6 +602,52 @@ describe("StewardRuntime", () => {
     }
   });
 
+  it("normalizes legacy remote scratch roots before building remote Worker cwd", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const remoteNode = await store.upsertExecutionNode({
+        name: "aicp-hhht-231",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@aicp-hhht-231",
+        workRoot: "/tmp/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run full verification",
+        body: "Run long-running build and tests on remote capacity."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(remoteAdapter.startInputs[0].cwd).toBe("/tmp/agent-fleet/work/agent-fleet/agent-fleet");
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: remoteNode.id,
+        cwd: "/tmp/agent-fleet/work/agent-fleet/agent-fleet"
+      });
+      expect(dashboard.worktreeAssignments[0]).toMatchObject({
+        repositoryPath: "/projects/agent-fleet",
+        worktreePath: "/tmp/agent-fleet/work/agent-fleet/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps ordinary small goals local even when remote capacity exists", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
     const localAdapter = new FakeWorkerAdapter();

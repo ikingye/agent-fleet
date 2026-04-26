@@ -26,7 +26,7 @@ The remote command is a minimal `sh -lc` wrapper that changes to the requested r
 cd '<remote target workspace>' && exec env HTTPS_PROXY='<proxy url>' codex exec --json --sandbox workspace-write -
 ```
 
-Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata and should default to `/tmp/agent-fleet/work` on stateless remote servers. Business project code and UI still belong in the target workspace, not in the agent-fleet dashboard. Remote workspaces are disposable scratch space. The source of truth stays in git and the local control-plane state; remote files must not be treated as durable project state.
+Use the submitted `workspacePath` / Target directory as the project location. Remote `workRoot` is node capacity metadata and should default to `/tmp/agent-fleet/work` on stateless remote servers. Registration, readiness probes, onboarding, and dispatch canonicalize an omitted `workRoot` or `/tmp/agent-fleet` to `/tmp/agent-fleet/work` so Worker cwd paths do not land directly in the scratch root. Business project code and UI still belong in the target workspace, not in the agent-fleet dashboard. Remote workspaces are disposable scratch space. The source of truth stays in git and the local control-plane state; remote files must not be treated as durable project state.
 
 When a ready remote node is selected, the Steward maps the target workspace to a deterministic remote cwd:
 
@@ -153,7 +153,7 @@ Fields:
 | `kind` | Yes | `remote` for SSH-backed nodes, `local` for the control-plane host. |
 | `status` | Yes | `unknown`, `offline`, or `ready`. |
 | `sshHost` | For ready remote nodes | SSH target such as `worker@mac-mini.local`; use `null` for local nodes. |
-| `workRoot` | Yes | Absolute scratch path where Worker sessions should run on that node. Defaults should use `/tmp/agent-fleet/work` for stateless remote servers. |
+| `workRoot` | Yes | Absolute scratch path where Worker sessions should run on that node. Defaults should use `/tmp/agent-fleet/work` for stateless remote servers; omitted values and `/tmp/agent-fleet` are stored and used as `/tmp/agent-fleet/work`. |
 | `proxyUrl` | No | Forwarded proxy URL visible from the remote process, or `null`. |
 | `tags` | No | Capability tags such as `remote`, `linux`, `gpu`, `high-cpu`, `china-network`, or `cuda`. Missing tags default to `[]` for old state. |
 | `capacity` | No | Maximum concurrent Worker sessions for this node. Missing capacity defaults to `1` for old state. |

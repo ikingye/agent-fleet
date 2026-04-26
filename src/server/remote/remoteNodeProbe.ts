@@ -1,5 +1,6 @@
 import type { ExecutionNode } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "./remoteNodeReadiness.js";
+import { normalizeRemoteWorkRoot } from "./remotePaths.js";
 import { SshRemoteCommandRunner, type RemoteCommandRunner } from "./remoteWorkerProbe.js";
 
 export type { RemoteCommandRunner } from "./remoteWorkerProbe.js";
@@ -24,9 +25,10 @@ export async function probeRemoteExecutionNode(
   input: ProbeRemoteExecutionNodeInput
 ): Promise<RemoteExecutionNodeProbeResult> {
   const codexCommand = normalizeCommand(input.codexCommand);
+  const workRoot = normalizeRemoteWorkRoot(input.node.workRoot);
   const checks = {
     sshHost: input.node.sshHost,
-    workRoot: input.node.workRoot,
+    workRoot,
     codexCommand
   };
 
@@ -41,7 +43,7 @@ export async function probeRemoteExecutionNode(
   const staticReadiness = evaluateRemoteNodeReadiness({
     status: input.node.status,
     sshHost: input.node.sshHost,
-    workRoot: input.node.workRoot,
+    workRoot,
     proxyUrl: input.node.proxyUrl,
     proxyRequired: false
   });
@@ -58,7 +60,7 @@ export async function probeRemoteExecutionNode(
   const runner = input.runner ?? new SshRemoteCommandRunner();
   const result = await runner.run({
     sshHost,
-    remoteScript: `test -d ${shellQuote(input.node.workRoot)} && command -v ${shellQuote(codexCommand)} >/dev/null 2>&1`
+    remoteScript: `test -d ${shellQuote(workRoot)} && command -v ${shellQuote(codexCommand)} >/dev/null 2>&1`
   });
 
   if (result.exitCode === 0) {

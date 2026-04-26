@@ -44,6 +44,23 @@ describe("probeRemoteExecutionNode", () => {
     });
   });
 
+  it("normalizes default remote scratch roots before probing", async () => {
+    const runner = new CapturingRemoteRunner({ exitCode: 0, stdout: "/usr/local/bin/codex\n", stderr: "" });
+
+    const result = await probeRemoteExecutionNode({
+      node: remoteNode({
+        workRoot: "/tmp/agent-fleet"
+      }),
+      codexCommand: "codex",
+      runner
+    });
+
+    expect(runner.inputs[0].remoteScript).toBe(
+      "test -d '/tmp/agent-fleet/work' && command -v 'codex' >/dev/null 2>&1"
+    );
+    expect(result.checks.workRoot).toBe("/tmp/agent-fleet/work");
+  });
+
   it("returns readiness reasons without ssh when static node facts are incomplete", async () => {
     const runner = new CapturingRemoteRunner({ exitCode: 0, stdout: "", stderr: "" });
 
