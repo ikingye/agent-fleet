@@ -1,6 +1,6 @@
-import { posix } from "node:path";
 import type { ExecutionNode } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "./remoteNodeReadiness.js";
+import { normalizeRemoteWorkRoot } from "./remotePaths.js";
 import { SshRemoteCommandRunner, type RemoteCommandRunner } from "./remoteWorkerProbe.js";
 
 export type { RemoteCommandRunner } from "./remoteWorkerProbe.js";
@@ -26,8 +26,6 @@ export interface RunRemoteNodeOnboardingInput {
   codexCommand: string;
   runner?: RemoteCommandRunner;
 }
-
-const DEFAULT_REMOTE_SCRATCH_ROOT = "/tmp/agent-fleet";
 
 const CHECK_LABELS: Record<RemoteOnboardingCheck["id"], string> = {
   configuration: "Remote node configuration",
@@ -86,20 +84,6 @@ export async function runRemoteNodeOnboarding(
   }
 
   return onboardingResult(input.node.id, normalizedWorkRoot, checks);
-}
-
-export function normalizeRemoteWorkRoot(workRoot: string): string {
-  const normalized = posix.normalize(workRoot.trim());
-
-  if (normalized === DEFAULT_REMOTE_SCRATCH_ROOT || normalized === `${DEFAULT_REMOTE_SCRATCH_ROOT}/`) {
-    return `${DEFAULT_REMOTE_SCRATCH_ROOT}/work`;
-  }
-
-  if (normalized === `${DEFAULT_REMOTE_SCRATCH_ROOT}/work`) {
-    return normalized;
-  }
-
-  return normalized;
 }
 
 function onboardingResult(

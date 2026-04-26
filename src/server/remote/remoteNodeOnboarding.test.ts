@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExecutionNode } from "../../shared/types.js";
-import {
-  normalizeRemoteWorkRoot,
-  runRemoteNodeOnboarding,
-  type RemoteCommandRunner
-} from "./remoteNodeOnboarding.js";
+import { normalizeRemoteWorkRoot } from "./remotePaths.js";
+import { runRemoteNodeOnboarding, type RemoteCommandRunner } from "./remoteNodeOnboarding.js";
 
 class CapturingRemoteRunner implements RemoteCommandRunner {
   readonly inputs: Array<{ sshHost: string; remoteScript: string }> = [];

@@ -1170,14 +1170,46 @@ describe("API routes", () => {
           proxyUrl: null
         }
       });
+      const rootResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-233",
+          kind: "remote",
+          status: "unknown",
+          sshHost: "worker@aicp-hhht-233",
+          workRoot: "/tmp/agent-fleet",
+          proxyUrl: null
+        }
+      });
+      const customScratchResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-234",
+          kind: "remote",
+          status: "unknown",
+          sshHost: "worker@aicp-hhht-234",
+          workRoot: "/tmp/custom-agent-fleet",
+          proxyUrl: null
+        }
+      });
 
       expect(defaultedResponse.statusCode).toBe(200);
       expect(normalizedResponse.statusCode).toBe(200);
+      expect(rootResponse.statusCode).toBe(200);
+      expect(customScratchResponse.statusCode).toBe(200);
       expect(defaultedResponse.json()).toMatchObject({
         workRoot: "/tmp/agent-fleet/work"
       });
       expect(normalizedResponse.json()).toMatchObject({
         workRoot: "/tmp/agent-fleet/work"
+      });
+      expect(rootResponse.json()).toMatchObject({
+        workRoot: "/tmp/agent-fleet/work"
+      });
+      expect(customScratchResponse.json()).toMatchObject({
+        workRoot: "/tmp/custom-agent-fleet"
       });
     } finally {
       await app.close();

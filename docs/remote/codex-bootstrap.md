@@ -282,6 +282,8 @@ When registering the execution node, set `proxyUrl` to the remote-visible forwar
 }
 ```
 
+Use `/tmp/agent-fleet/work` as the registered `workRoot` for stateless remote nodes. The API also canonicalizes an omitted `workRoot` or `/tmp/agent-fleet` to `/tmp/agent-fleet/work`, and dispatch builds Worker cwd paths below that `work` child.
+
 agent-fleet passes proxy environment variables to remote Worker commands when `proxyUrl` is set:
 
 ```text

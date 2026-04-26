@@ -10,6 +10,7 @@ import type {
 } from "../../shared/types.js";
 import { GitRefSync, buildGitRefSyncRefs, type FetchInboundGitRefSyncInput, type GitRefSyncInboundResult } from "../remote/gitRefSync.js";
 import type { GithubDeployKeyLeaseResolver } from "../remote/githubDeployKeyLeaseResolver.js";
+import { normalizeRemoteWorkRoot } from "../remote/remotePaths.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import type { RemoteWorkspaceProvisioner, RemoteWorkspaceProvisionResult } from "../remote/remoteWorkspaceProvisioner.js";
 import type { RemoteGithubDeployKeyProvisioner } from "../remote/remoteKeyProvisioner.js";
@@ -798,7 +799,7 @@ export class StewardRuntime {
 }
 
 function buildRemoteWorkspacePath(node: ExecutionNode, projectName: string, workspacePath: string): string {
-  return posix.join(node.workRoot, slugify(projectName), slugify(workspaceName(workspacePath)));
+  return posix.join(normalizeRemoteWorkRoot(node.workRoot), slugify(projectName), slugify(workspaceName(workspacePath)));
 }
 
 function remoteWorkerBranchName(workerName: string): string {
