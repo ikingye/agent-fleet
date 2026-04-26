@@ -35,6 +35,7 @@ export interface PrepareRemoteScratchGitRefSyncInput {
   remoteWorkspacePath: string;
   workerBranch: string;
   workerRef: string;
+  gitSshCommand?: string;
 }
 
 export interface FetchInboundGitRefSyncInput {
@@ -325,6 +326,7 @@ export function buildGitRefSyncRefs(workerName: string): GitRefSyncRefs {
 function buildRemoteScratchScript(input: PrepareRemoteScratchGitRefSyncInput): string {
   const remoteTrackingRef = `refs/remotes/origin/${input.workerBranch}`;
   const refspec = `+${input.workerRef}:${remoteTrackingRef}`;
+  const gitCommand = remoteGitCommand(input.gitSshCommand);
 
   return [
     "set -eu",
@@ -333,15 +335,25 @@ function buildRemoteScratchScript(input: PrepareRemoteScratchGitRefSyncInput): s
     `  cd ${shellQuote(input.remoteWorkspacePath)}`,
     `  git remote set-url origin ${shellQuote(input.originUrl)} || git remote add origin ${shellQuote(input.originUrl)}`,
     `elif [ -z "$(ls -A ${shellQuote(input.remoteWorkspacePath)} 2>/dev/null)" ]; then`,
-    `  git clone --no-checkout ${shellQuote(input.originUrl)} ${shellQuote(input.remoteWorkspacePath)}`,
+    `  ${gitCommand} clone --no-checkout ${shellQuote(input.originUrl)} ${shellQuote(input.remoteWorkspacePath)}`,
     `  cd ${shellQuote(input.remoteWorkspacePath)}`,
     "else",
     "  echo 'remote cwd exists but is not an empty git checkout' >&2",
     "  exit 42",
     "fi",
-    `git fetch origin ${shellQuote(refspec)}`,
+    `${gitCommand} fetch origin ${shellQuote(refspec)}`,
     `git checkout -B ${shellQuote(input.workerBranch)} FETCH_HEAD`
   ].join("\n");
+}
+
+function remoteGitCommand(gitSshCommand: string | undefined): string {
+  const normalized = gitSshCommand?.trim();
+
+  if (normalized === undefined || normalized === "") {
+    return "git";
+  }
+
+  return `env GIT_SSH_COMMAND=${shellQuote(normalized)} git`;
 }
 
 function spawnCommand(command: string, args: string[], cwd?: string): Promise<GitRefSyncCommandResult> {

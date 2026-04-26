@@ -9,6 +9,7 @@ export interface BuildSshWorkerCommandInput {
   workerArgs?: readonly string[];
   sshCommand?: string;
   sshArgs?: readonly string[];
+  env?: Readonly<Record<string, string | null | undefined>>;
   proxyEnv?: Readonly<Record<string, string | null | undefined>>;
 }
 
@@ -42,6 +43,7 @@ export interface RemoteSshWorkerAdapterOptions {
   workerArgs?: readonly string[];
   sshCommand?: string;
   sshArgs?: readonly string[];
+  env?: Readonly<Record<string, string | null | undefined>>;
   proxyEnv?: Readonly<Record<string, string | null | undefined>>;
   startupTimeoutMs?: number;
   kind?: WorkerKind;
@@ -71,6 +73,7 @@ export class RemoteSshWorkerAdapter implements WorkerAdapter {
       cwd: input.cwd,
       workerCommand: this.options.workerCommand,
       workerArgs: this.options.workerArgs,
+      env: this.options.env,
       proxyEnv: this.options.proxyEnv
     });
     const processResult = await this.runner.run({
@@ -158,8 +161,11 @@ export function buildSshWorkerCommand(input: BuildSshWorkerCommandInput): BuiltS
   }
 
   const workerInvocation = [workerCommand, ...(input.workerArgs ?? [])].map(shellQuote).join(" ");
-  const proxyAssignments = buildProxyAssignments(input.proxyEnv ?? {});
-  const envPrefix = proxyAssignments.length === 0 ? "" : `env ${proxyAssignments.join(" ")} `;
+  const environmentAssignments = buildEnvironmentAssignments({
+    ...(input.env ?? {}),
+    ...(input.proxyEnv ?? {})
+  });
+  const envPrefix = environmentAssignments.length === 0 ? "" : `env ${environmentAssignments.join(" ")} `;
   const script = [
     `cd ${shellQuote(cwd)} && {`,
     "agent_fleet_prompt_file=$(mktemp \"${TMPDIR:-/tmp}/agent-fleet-worker-stdin.XXXXXX\") || exit 1;",
@@ -186,8 +192,8 @@ export function buildSshWorkerCommand(input: BuildSshWorkerCommandInput): BuiltS
   };
 }
 
-function buildProxyAssignments(proxyEnv: Readonly<Record<string, string | null | undefined>>): string[] {
-  return Object.entries(proxyEnv)
+function buildEnvironmentAssignments(environment: Readonly<Record<string, string | null | undefined>>): string[] {
+  return Object.entries(environment)
     .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
     .flatMap(([name, value]) => {
       if (value === null || value === undefined || value.trim() === "") {
@@ -195,7 +201,7 @@ function buildProxyAssignments(proxyEnv: Readonly<Record<string, string | null |
       }
 
       if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
-        throw new Error(`Invalid proxy environment variable name: ${name}`);
+        throw new Error(`Invalid environment variable name: ${name}`);
       }
 
       return [`${name}=${shellQuote(value.trim())}`];

@@ -69,6 +69,23 @@ describe("buildSshWorkerCommand", () => {
     expect(syntaxCheck.status).toBe(0);
     expect(syntaxCheck.stderr).toBe("");
   });
+
+  it("passes a generic remote environment including GIT_SSH_COMMAND to the Worker command", () => {
+    const built = buildSshWorkerCommand({
+      sshHost: "worker@example.com",
+      cwd: "/tmp/project",
+      workerCommand: "codex",
+      env: {
+        GIT_SSH_COMMAND:
+          "ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443"
+      }
+    });
+
+    expect(built.args.at(-1)).toContain(
+      "GIT_SSH_COMMAND='\\''ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443'\\''"
+    );
+    expect(built.displayCommand).not.toContain("GIT_SSH_COMMAND");
+  });
 });
 
 describe("RemoteSshWorkerAdapter", () => {

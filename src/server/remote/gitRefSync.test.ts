@@ -157,6 +157,33 @@ describe("GitRefSync", () => {
     );
   });
 
+  it("can inject a GIT_SSH_COMMAND for remote clone and fetch without writing ssh config", async () => {
+    const runner = new CapturingGitRefSyncRunner();
+    const sync = new GitRefSync(runner);
+    const workerName = "agent-fleet-remote-git-ref-sync-remote-202604262208";
+
+    const result = await sync.prepareRemoteScratch({
+      sshHost: "builder@example.internal",
+      originUrl: "git@github.com:owner/repo.git",
+      remoteWorkspacePath: "/tmp/agent-fleet/work/owner-repo",
+      workerBranch: `agent-fleet/workers/${workerName}`,
+      workerRef: `refs/heads/agent-fleet/workers/${workerName}`,
+      gitSshCommand:
+        "ssh -i '/tmp/agent-fleet/keys/owner repo/github-deploy-key' -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443"
+    });
+
+    expect(result.status).toBe("prepared");
+    const script = runner.commands[0].kind === "ssh" ? runner.commands[0].remoteScript : "";
+    expect(script).toContain(
+      "env GIT_SSH_COMMAND='ssh -i '\\''/tmp/agent-fleet/keys/owner repo/github-deploy-key'\\'' -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443' git clone --no-checkout"
+    );
+    expect(script).toContain(
+      "env GIT_SSH_COMMAND='ssh -i '\\''/tmp/agent-fleet/keys/owner repo/github-deploy-key'\\'' -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443' git fetch origin"
+    );
+    expect(script).not.toContain("Host github.com");
+    expect(script).not.toContain(".ssh/config");
+  });
+
   it("fetches and checks out the returned result ref", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-git-ref-sync-"));
     const bare = join(dir, "origin.git");

@@ -6,6 +6,7 @@ export interface RemoteWorkspaceProvisionInput {
   localWorkspacePath: string;
   remoteWorkspacePath: string;
   workerName: string;
+  gitSshCommand?: string;
 }
 
 export interface RemoteWorkspaceProvisionResult {
@@ -62,7 +63,8 @@ export class GitRemoteWorkspaceProvisioner implements RemoteWorkspaceProvisioner
       originUrl: outbound.originUrl,
       remoteWorkspacePath: input.remoteWorkspacePath,
       workerBranch: outbound.workerBranch,
-      workerRef: outbound.workerRef
+      workerRef: outbound.workerRef,
+      gitSshCommand: input.gitSshCommand
     });
 
     if (remoteScratch.status === "blocked") {
