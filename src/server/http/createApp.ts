@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
 import { probeRemoteExecutionNode, type RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
+import { normalizeRemoteWorkRoot } from "../remote/remotePaths.js";
 import {
   GitRemoteWorkspaceProvisioner,
   type RemoteWorkspaceProvisioner
@@ -169,12 +170,17 @@ function requireExecutionNodeStatus(value: unknown): ExecutionNode["status"] {
 }
 
 function parseExecutionNodeInput(body: Record<string, unknown>): Omit<ExecutionNode, "id" | "createdAt" | "updatedAt"> {
+  const kind = requireExecutionNodeKind(body.kind);
+
   return {
     name: requireString(body.name, "name"),
-    kind: requireExecutionNodeKind(body.kind),
+    kind,
     status: requireExecutionNodeStatus(body.status),
     sshHost: optionalString(body.sshHost, "sshHost"),
-    workRoot: requireString(body.workRoot, "workRoot"),
+    workRoot:
+      kind === "remote"
+        ? normalizeRemoteWorkRoot(optionalString(body.workRoot, "workRoot"))
+        : requireString(body.workRoot, "workRoot"),
     proxyUrl: optionalString(body.proxyUrl, "proxyUrl"),
     tags: optionalTags(body.tags),
     capacity: optionalCapacity(body.capacity)
