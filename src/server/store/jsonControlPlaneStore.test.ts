@@ -97,4 +97,50 @@ describe("JsonControlPlaneStore", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("upserts execution nodes by name and records audit events", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const created = await store.upsertExecutionNode({
+        name: "mac-mini-builder",
+        kind: "remote",
+        status: "unknown",
+        sshHost: "worker@mac-mini.local",
+        workRoot: "/Users/worker/agent-fleet",
+        proxyUrl: null
+      });
+      const updated = await store.upsertExecutionNode({
+        name: "mac-mini-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@mac-mini.local",
+        workRoot: "/Users/worker/agent-fleet-updated",
+        proxyUrl: "http://127.0.0.1:1080"
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(updated.id).toBe(created.id);
+      expect(updated.createdAt).toBe(created.createdAt);
+      expect(dashboard.executionNodes).toHaveLength(1);
+      expect(dashboard.executionNodes[0]).toMatchObject({
+        id: created.id,
+        name: "mac-mini-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@mac-mini.local",
+        workRoot: "/Users/worker/agent-fleet-updated",
+        proxyUrl: "http://127.0.0.1:1080"
+      });
+      expect(dashboard.events.map((event) => event.type)).toEqual([
+        "execution_node.registered",
+        "execution_node.updated"
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

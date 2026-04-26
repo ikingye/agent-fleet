@@ -76,6 +76,8 @@ export interface UpsertMemoryInput {
   sourceCorrectionId: string | null;
 }
 
+export type UpsertExecutionNodeInput = Omit<ExecutionNode, "id" | "createdAt" | "updatedAt">;
+
 function now(): string {
   return new Date().toISOString();
 }
@@ -366,7 +368,40 @@ export class JsonControlPlaneStore {
     return memory;
   }
 
-  async createExecutionNode(input: Omit<ExecutionNode, "id" | "createdAt" | "updatedAt">): Promise<ExecutionNode> {
+  async createExecutionNode(input: UpsertExecutionNodeInput): Promise<ExecutionNode> {
+    return this.upsertExecutionNode(input);
+  }
+
+  async upsertExecutionNode(input: UpsertExecutionNodeInput): Promise<ExecutionNode> {
+    const existing = this.state.executionNodes.find((node) => node.name === input.name);
+
+    if (existing !== undefined) {
+      existing.kind = input.kind;
+      existing.status = input.status;
+      existing.sshHost = input.sshHost;
+      existing.workRoot = input.workRoot;
+      existing.proxyUrl = input.proxyUrl;
+      existing.updatedAt = now();
+      this.addEvent({
+        type: "execution_node.updated",
+        goalId: null,
+        decisionId: null,
+        workerSessionId: null,
+        message: `Execution node updated: ${existing.name}`,
+        metadata: {
+          executionNodeId: existing.id,
+          name: existing.name,
+          kind: existing.kind,
+          status: existing.status,
+          sshHost: existing.sshHost,
+          workRoot: existing.workRoot,
+          proxyUrl: existing.proxyUrl
+        }
+      });
+      await this.save();
+      return existing;
+    }
+
     const timestamp = now();
     const node: ExecutionNode = {
       id: randomUUID(),
@@ -376,6 +411,22 @@ export class JsonControlPlaneStore {
     };
 
     this.state.executionNodes.push(node);
+    this.addEvent({
+      type: "execution_node.registered",
+      goalId: null,
+      decisionId: null,
+      workerSessionId: null,
+      message: `Execution node registered: ${node.name}`,
+      metadata: {
+        executionNodeId: node.id,
+        name: node.name,
+        kind: node.kind,
+        status: node.status,
+        sshHost: node.sshHost,
+        workRoot: node.workRoot,
+        proxyUrl: node.proxyUrl
+      }
+    });
     await this.save();
 
     return node;

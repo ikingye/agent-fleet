@@ -121,4 +121,132 @@ describe("API routes", () => {
       await app.close();
     }
   });
+
+  it("registers a remote execution node and exposes it on the dashboard", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const nodeResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "mac-mini-builder",
+          kind: "remote",
+          status: "unknown",
+          sshHost: "worker@mac-mini.local",
+          workRoot: "/Users/worker/agent-fleet",
+          proxyUrl: "http://127.0.0.1:1080"
+        }
+      });
+
+      expect(nodeResponse.statusCode).toBe(200);
+      expect(nodeResponse.json()).toMatchObject({
+        name: "mac-mini-builder",
+        kind: "remote",
+        status: "unknown",
+        sshHost: "worker@mac-mini.local",
+        workRoot: "/Users/worker/agent-fleet",
+        proxyUrl: "http://127.0.0.1:1080"
+      });
+
+      const dashboardResponse = await app.inject({ method: "GET", url: "/api/dashboard" });
+      const dashboard = dashboardResponse.json();
+
+      expect(dashboard.executionNodes).toHaveLength(1);
+      expect(dashboard.executionNodes[0]).toMatchObject({
+        name: "mac-mini-builder",
+        kind: "remote"
+      });
+      expect(dashboard.events.map((event: { type: string }) => event.type)).toContain("execution_node.registered");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("updates an execution node by name without creating dashboard duplicates", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const createdResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "linux-builder",
+          kind: "remote",
+          status: "unknown",
+          sshHost: "worker@linux-builder.internal",
+          workRoot: "/srv/agent-fleet",
+          proxyUrl: null
+        }
+      });
+      const created = createdResponse.json();
+
+      const updatedResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "linux-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: "worker@linux-builder.internal",
+          workRoot: "/srv/agent-fleet",
+          proxyUrl: "http://127.0.0.1:1080"
+        }
+      });
+      const updated = updatedResponse.json();
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(createdResponse.statusCode).toBe(200);
+      expect(updatedResponse.statusCode).toBe(200);
+      expect(updated.id).toBe(created.id);
+      expect(updated).toMatchObject({
+        status: "ready",
+        proxyUrl: "http://127.0.0.1:1080"
+      });
+      expect(dashboard.executionNodes).toHaveLength(1);
+      expect(dashboard.events.map((event: { type: string }) => event.type)).toEqual([
+        "execution_node.registered",
+        "execution_node.updated"
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects ready remote execution nodes that are missing required readiness facts", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const nodeResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "broken-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: null,
+          workRoot: "relative/work",
+          proxyUrl: null
+        }
+      });
+
+      expect(nodeResponse.statusCode).toBe(400);
+      expect(nodeResponse.json()).toMatchObject({
+        error: "Bad Request",
+        message: "Remote execution node is not ready: ssh host is required; work root must be an absolute path"
+      });
+    } finally {
+      await app.close();
+    }
+  });
 });
