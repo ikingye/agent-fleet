@@ -73,7 +73,10 @@ export class RemoteSshWorkerAdapter implements WorkerAdapter {
       cwd: input.cwd,
       workerCommand: this.options.workerCommand,
       workerArgs: this.options.workerArgs,
-      env: this.options.env,
+      env: {
+        ...(this.options.env ?? {}),
+        ...(input.env ?? {})
+      },
       proxyEnv: this.options.proxyEnv
     });
     const processResult = await this.runner.run({

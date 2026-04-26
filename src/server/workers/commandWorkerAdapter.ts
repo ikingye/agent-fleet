@@ -10,6 +10,7 @@ export interface WorkerStartInput {
   goalTitle: string;
   prompt: string;
   cwd: string;
+  env?: Readonly<Record<string, string | null | undefined>>;
 }
 
 export interface WorkerStartResult {
@@ -121,7 +122,7 @@ export class CommandWorkerAdapter implements WorkerAdapter {
       cwd: input.cwd,
       prompt: input.prompt,
       startupTimeoutMs: this.startupTimeoutMs,
-      env: this.env
+      env: mergeEnvironment(this.env, input.env)
     });
   }
 }
@@ -221,6 +222,26 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
     });
     child.stdin.end(input.prompt);
   });
+}
+
+function mergeEnvironment(
+  base: NodeJS.ProcessEnv,
+  overrides: Readonly<Record<string, string | null | undefined>> | undefined
+): NodeJS.ProcessEnv {
+  if (overrides === undefined) {
+    return base;
+  }
+
+  const merged: NodeJS.ProcessEnv = { ...base };
+  for (const [name, value] of Object.entries(overrides)) {
+    if (value === null || value === undefined) {
+      delete merged[name];
+    } else {
+      merged[name] = value;
+    }
+  }
+
+  return merged;
 }
 
 async function resolveCommand(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<ResolvedCommand | null> {

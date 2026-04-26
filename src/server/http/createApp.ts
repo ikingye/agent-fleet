@@ -10,12 +10,17 @@ import type {
 } from "../../shared/types.js";
 import { runRemoteNodeOnboarding } from "../remote/remoteNodeOnboarding.js";
 import { probeRemoteExecutionNode, type RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
+import {
+  LocalGithubDeployKeyLeaseResolver,
+  type GithubDeployKeyLeaseResolver
+} from "../remote/githubDeployKeyLeaseResolver.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { normalizeRemoteWorkRoot } from "../remote/remotePaths.js";
 import {
   GitRemoteWorkspaceProvisioner,
   type RemoteWorkspaceProvisioner
 } from "../remote/remoteWorkspaceProvisioner.js";
+import { RemoteGithubDeployKeyProvisioner } from "../remote/remoteKeyProvisioner.js";
 import { probeRemoteWorkerPid } from "../remote/remoteWorkerProbe.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
@@ -48,6 +53,8 @@ export interface CreateAppOptions {
   workerAdapter?: WorkerAdapter;
   remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
   remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
+  githubDeployKeyLeaseResolver?: GithubDeployKeyLeaseResolver;
+  remoteGithubDeployKeyProvisioner?: RemoteGithubDeployKeyProvisioner;
   remoteSshWorkerRunner?: SshWorkerProcessRunner;
   remoteCommandRunner?: RemoteCommandRunner;
   workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
@@ -282,6 +289,8 @@ export async function createApp(options: CreateAppOptions = {}) {
           runner: options.remoteSshWorkerRunner
         })),
     remoteWorkspaceProvisioner: options.remoteWorkspaceProvisioner ?? new GitRemoteWorkspaceProvisioner(),
+    githubDeployKeyLeaseResolver: options.githubDeployKeyLeaseResolver ?? new LocalGithubDeployKeyLeaseResolver(),
+    remoteGithubDeployKeyProvisioner: options.remoteGithubDeployKeyProvisioner ?? new RemoteGithubDeployKeyProvisioner(),
     defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd(),
     defaultRepositoryPath,
     worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees"),
