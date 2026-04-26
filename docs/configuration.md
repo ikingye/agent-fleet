@@ -1,51 +1,25 @@
 # Configuration
 
-agent-fleet keeps configuration small and explicit.
-
-## Environment Variables
+agent-fleet reads configuration from environment variables.
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `AGENT_FLEET_HOST` | `127.0.0.1` | HTTP bind host. Keep this loopback-only unless you understand the exposure. |
-| `AGENT_FLEET_PORT` | `8787` | HTTP bind port. |
-| `AGENT_FLEET_DB` | `.agent-fleet/agent-fleet.sqlite` | SQLite database path. |
-
-Example:
-
-```bash
-AGENT_FLEET_HOST=127.0.0.1 \
-AGENT_FLEET_PORT=8787 \
-AGENT_FLEET_DB=.agent-fleet/agent-fleet.sqlite \
-npm start
-```
-
-## Remote Proxy Fallback
-
-For remote servers that need selected blocked domains to exit through your laptop proxy, configure SSH:
-
-```sshconfig
-Host remote-dev
-    HostName 203.0.113.10
-    User ubuntu
-    IdentityFile ~/.ssh/agent_fleet_remote
-    RemoteForward 127.0.0.1:1080 127.0.0.1:1080
-```
-
-Then use remote node proxy mode `auto` with:
-
-```text
-http://127.0.0.1:1080
-```
-
-`auto` mode keeps normal traffic direct and uses proxy checks for fallback domains.
+| `AGENT_FLEET_HOST` | `127.0.0.1` | Host for the Fastify API. |
+| `AGENT_FLEET_PORT` | `8787` | Port for the Fastify API. |
+| `AGENT_FLEET_STATE` | `.agent-fleet/control-plane.json` | JSON control-plane state path. |
+| `AGENT_FLEET_WORKER_COMMAND` | `codexyoloproxy` | Worker command or zsh alias to launch. |
+| `AGENT_FLEET_WORKER_CWD` | current working directory | Working directory passed to Worker sessions. |
 
 ## Local State
 
-The following paths are intentionally ignored by git:
+`.agent-fleet/` is ignored by git. It may contain resume ids, process metadata, decisions, corrections, and other local context. Do not commit it.
 
-- `.agent-fleet/`
-- `.worktrees/`
-- `.env`
-- logs and test output
+## Worker Command Resolution
 
-Do not move runtime state into tracked paths.
+The current adapter first checks for an executable on PATH. If that fails, it checks whether the command is a zsh alias available through `zsh -ic`.
+
+This supports aliases such as:
+
+```sh
+alias codexyoloproxy='codexawakeproxy --yolo'
+```

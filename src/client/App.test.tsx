@@ -1,52 +1,58 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { RemoteHost, RemoteHostDiagnostics, Repository, Task, TaskEvent } from "../shared/types.js";
 import { App } from "./App.js";
 
-const repository: Repository = {
-  id: "repo-1",
-  projectId: "project-1",
-  name: "agent-fleet",
-  rootPath: "/root/code/project/agent-fleet",
-  remoteUrl: "https://github.com/ikingye/agent-fleet.git",
-  mainBranch: "main",
-  createdAt: "2026-04-25T00:00:00.000Z"
-};
-
-const remoteHost: RemoteHost = {
-  id: "remote-1",
-  name: "remote-dev",
-  sshHost: "remote-dev",
-  workRoot: "/root/code/project",
-  proxyMode: "auto",
-  proxyUrl: "http://127.0.0.1:1080",
-  localForwardPort: 8788,
-  createdAt: "2026-04-25T00:00:00.000Z",
-  updatedAt: "2026-04-25T00:00:00.000Z"
-};
-
-const queuedTask: Task = {
-  id: "task-1",
-  repositoryId: repository.id,
-  title: "Continue agent-fleet",
-  goal: "Improve agent-managed parallel development.",
-  state: "queued",
-  source: "local",
-  sourceUrl: null,
-  createdAt: "2026-04-25T00:00:00.000Z",
-  updatedAt: "2026-04-25T00:00:00.000Z"
-};
-
-const queuedEvent: TaskEvent = {
-  id: "event-1",
-  taskId: queuedTask.id,
-  actor: "user",
-  state: "queued",
-  message: "Task queued",
-  metadataJson: "{}",
-  createdAt: "2026-04-25T00:00:00.000Z"
+const dashboard = {
+  goals: [
+    {
+      id: "goal-1",
+      projectName: "agent-fleet",
+      title: "Bootstrap agent-fleet",
+      body: "Build the Steward/Worker loop.",
+      status: "running",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z"
+    }
+  ],
+  decisions: [
+    {
+      id: "decision-1",
+      goalId: "goal-1",
+      workerSessionId: "worker-1",
+      title: "Start Worker Agent for goal",
+      rationale: "The request is executable and reversible enough to start autonomously.",
+      risk: "medium",
+      confidence: 0.72,
+      reversible: true,
+      needsHumanReview: true,
+      status: "active",
+      actionsJson: "[\"Start Worker Agent\"]",
+      createdAt: "2026-04-26T00:00:00.000Z"
+    }
+  ],
+  workerSessions: [
+    {
+      id: "worker-1",
+      goalId: "goal-1",
+      decisionId: "decision-1",
+      kind: "codex",
+      command: "codexyoloproxy",
+      cwd: "/worktrees/agent-fleet",
+      pid: 4242,
+      hostId: null,
+      resumeId: "resume-1",
+      status: "running",
+      lastOutput: "started",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z"
+    }
+  ],
+  corrections: [],
+  memories: [],
+  executionNodes: [],
+  events: []
 };
 
 function jsonResponse(value: unknown) {
@@ -56,115 +62,74 @@ function jsonResponse(value: unknown) {
   };
 }
 
-const dispatcher = {
-  enabled: true,
-  running: false,
-  intervalMs: 5000,
-  lastRunStartedAt: null,
-  lastRunFinishedAt: null,
-  lastRunHadTask: null,
-  lastError: null
-};
-
 describe("App", () => {
   beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            repositories: [],
-            tasks: [],
-            taskEventsByTaskId: {},
-            dispatcher,
-            remoteHosts: []
-          })
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(dashboard)));
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("renders the Steward control plane with decisions and Worker sessions", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "agent-fleet" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Decision Ledger" })).toBeInTheDocument();
+    expect(screen.getByText("Start Worker Agent for goal")).toBeInTheDocument();
+    expect(screen.getByText("needs review")).toBeInTheDocument();
+    expect(screen.getByText("codexyoloproxy")).toBeInTheDocument();
+    expect(screen.getByText("pid 4242")).toBeInTheDocument();
+    expect(screen.getByText("resume-1")).toBeInTheDocument();
+  });
+
+  it("submits a new goal to the Steward Agent", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ ...dashboard, goals: [], decisions: [], workerSessions: [] }))
+      .mockResolvedValueOnce(jsonResponse(dashboard.goals[0]))
+      .mockResolvedValueOnce(jsonResponse(dashboard));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Project"), "agent-fleet");
+    await user.type(screen.getByLabelText("Goal title"), "Bootstrap agent-fleet");
+    await user.type(screen.getByLabelText("Goal body"), "Build the Steward/Worker loop.");
+    await user.click(screen.getByRole("button", { name: "Start Steward" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/goals",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          projectName: "agent-fleet",
+          title: "Bootstrap agent-fleet",
+          body: "Build the Steward/Worker loop."
+        })
       })
     );
   });
 
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("renders the local fleet dashboard", async () => {
-    render(<App />);
-
-    expect(screen.getByRole("heading", { level: 1, name: "agent-fleet" })).toBeInTheDocument();
-    expect(await screen.findByRole("heading", { level: 2, name: "Task Queue" })).toBeInTheDocument();
-    expect(screen.getByPlaceholderText("Task title")).toBeInTheDocument();
-  });
-
-  it("renders repository registration", async () => {
-    render(<App />);
-
-    expect(await screen.findByRole("heading", { level: 2, name: "Projects" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Project name")).toBeInTheDocument();
-    expect(screen.getByLabelText("Repository name")).toBeInTheDocument();
-    expect(screen.getByLabelText("Repository root path")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add repository" })).toBeInTheDocument();
-  });
-
-  it("renders remote node management", async () => {
-    render(<App />);
-
-    expect(await screen.findByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add remote node" })).toBeInTheDocument();
-    expect(screen.getByText("No remote execution nodes registered.")).toBeInTheDocument();
-  });
-
-  it("renders task progress controls and event timeline", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValueOnce(
-        jsonResponse({
-          repositories: [repository],
-          tasks: [queuedTask],
-          taskEventsByTaskId: { [queuedTask.id]: [queuedEvent] },
-          dispatcher,
-          remoteHosts: []
-        })
-      )
-    );
-
-    render(<App />);
-
-    expect(await screen.findByText("Auto dispatcher")).toBeInTheDocument();
-    expect(screen.getByText("idle")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run once" })).toBeInTheDocument();
-    expect(screen.getByText("Task queued")).toBeInTheDocument();
-    expect(screen.getByText("user")).toBeInTheDocument();
-  });
-
-  it("runs the next queued task and refreshes progress", async () => {
-    const plannedTask: Task = { ...queuedTask, state: "planned" };
-    const plannedEvent: TaskEvent = {
-      ...queuedEvent,
-      id: "event-2",
-      actor: "orchestrator",
-      state: "planned",
-      message: "Task planned"
-    };
+  it("sends a correction for a Steward decision", async () => {
     const fetchMock = vi
       .fn()
+      .mockResolvedValueOnce(jsonResponse(dashboard))
+      .mockResolvedValueOnce(jsonResponse({ id: "correction-1" }))
       .mockResolvedValueOnce(
         jsonResponse({
-          repositories: [repository],
-          tasks: [queuedTask],
-          taskEventsByTaskId: { [queuedTask.id]: [queuedEvent] },
-          dispatcher,
-          remoteHosts: []
-        })
-      )
-      .mockResolvedValueOnce(jsonResponse({ ran: true }))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          repositories: [repository],
-          tasks: [plannedTask],
-          taskEventsByTaskId: { [queuedTask.id]: [queuedEvent, plannedEvent] },
-          dispatcher,
-          remoteHosts: []
+          ...dashboard,
+          corrections: [
+            {
+              id: "correction-1",
+              decisionId: "decision-1",
+              body: "Escalate irreversible merge decisions to me.",
+              createdBy: "human",
+              createdAt: "2026-04-26T00:00:00.000Z"
+            }
+          ]
         })
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -172,150 +137,17 @@ describe("App", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Run once" }));
-
-    expect(fetchMock).toHaveBeenCalledWith("/api/orchestrator/run-once", { method: "POST" });
-    expect(await screen.findByText("Task planned")).toBeInTheDocument();
-    expect(screen.getAllByText("planned").length).toBeGreaterThan(0);
-  });
-
-  it("shows an error when queueing a task without a repository", async () => {
-    const user = userEvent.setup();
-
-    render(<App />);
-
-    await user.click(await screen.findByRole("button", { name: "Queue task" }));
-
-    expect(
-      screen.getByText("Register a repository before creating tasks.")
-    ).toBeInTheDocument();
-  });
-
-  it("creates a repository", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ repositories: [], tasks: [], remoteHosts: [] }))
-      .mockResolvedValueOnce(jsonResponse(repository))
-      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [], remoteHosts: [] }));
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<App />);
-
-    await user.type(await screen.findByLabelText("Project name"), "agent-fleet");
-    await user.type(screen.getByLabelText("Repository name"), "agent-fleet");
-    await user.type(screen.getByLabelText("Repository root path"), "/root/code/project/agent-fleet");
-    await user.type(screen.getByLabelText("Remote URL"), "https://github.com/ikingye/agent-fleet.git");
-    await user.click(screen.getByRole("button", { name: "Add repository" }));
+    await user.type(await screen.findByLabelText("Correction for Start Worker Agent for goal"), "Escalate irreversible merge decisions to me.");
+    await user.click(screen.getByRole("button", { name: "Send correction" }));
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/api/repositories",
+      "/api/decisions/decision-1/corrections",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          projectName: "agent-fleet",
-          name: "agent-fleet",
-          rootPath: "/root/code/project/agent-fleet",
-          remoteUrl: "https://github.com/ikingye/agent-fleet.git",
-          mainBranch: "main"
+          body: "Escalate irreversible merge decisions to me."
         })
       })
     );
-    expect(await screen.findByText("/root/code/project/agent-fleet")).toBeInTheDocument();
-  });
-
-  it("queues a task against the registered repository", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [], remoteHosts: [] }))
-      .mockResolvedValueOnce(jsonResponse(queuedTask))
-      .mockResolvedValueOnce(jsonResponse({ repositories: [repository], tasks: [queuedTask], remoteHosts: [] }));
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<App />);
-
-    await user.type(await screen.findByLabelText("Task title"), "Continue agent-fleet");
-    await user.type(screen.getByLabelText("Goal and acceptance criteria"), "Improve agent-managed parallel development.");
-    await user.click(screen.getByRole("button", { name: "Queue task" }));
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/tasks",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          repositoryId: "repo-1",
-          title: "Continue agent-fleet",
-          goal: "Improve agent-managed parallel development."
-        })
-      })
-    );
-    expect(await screen.findByText("Continue agent-fleet")).toBeInTheDocument();
-  });
-
-  it("creates a remote host", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ repositories: [], tasks: [], remoteHosts: [] }))
-      .mockResolvedValueOnce(jsonResponse(remoteHost))
-      .mockResolvedValueOnce(jsonResponse({ repositories: [], tasks: [], remoteHosts: [remoteHost] }));
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<App />);
-
-    await user.type(await screen.findByLabelText("Node name"), "remote-dev");
-    await user.type(screen.getByLabelText("SSH host"), "remote-dev");
-    await user.type(screen.getByLabelText("Work root"), "/root/code/project");
-    await user.type(screen.getByLabelText("Local forward port"), "8788");
-    await user.click(screen.getByRole("button", { name: "Add remote node" }));
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/remote-hosts",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          name: "remote-dev",
-          sshHost: "remote-dev",
-          workRoot: "/root/code/project",
-          proxyMode: "auto",
-          proxyUrl: "http://127.0.0.1:1080",
-          localForwardPort: 8788
-        })
-      })
-    );
-    expect(await screen.findByText("/root/code/project")).toBeInTheDocument();
-  });
-
-  it("checks an existing remote host", async () => {
-    const diagnostics: RemoteHostDiagnostics = {
-      host: remoteHost,
-      checks: [
-        {
-          name: "github_proxy",
-          status: "passed",
-          message: "GitHub API is reachable through the forwarded local proxy.",
-          output: "HTTP/2 200"
-        }
-      ],
-      recommendedEnvironment: {
-        HTTPS_PROXY: "http://127.0.0.1:1080"
-      },
-      checkedAt: "2026-04-25T00:00:00.000Z"
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse({ repositories: [], tasks: [], remoteHosts: [remoteHost] }))
-      .mockResolvedValueOnce(jsonResponse(diagnostics));
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-
-    render(<App />);
-
-    await user.click(await screen.findByRole("button", { name: "Check remote-dev" }));
-
-    expect(fetchMock).toHaveBeenCalledWith("/api/remote-hosts/remote-1/check", { method: "POST" });
-    expect(await screen.findByText("github_proxy")).toBeInTheDocument();
-    expect(screen.getByText("passed")).toBeInTheDocument();
   });
 });

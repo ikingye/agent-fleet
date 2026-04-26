@@ -1,14 +1,14 @@
 # Support
 
-Use GitHub Issues for reproducible bugs and well-scoped feature requests.
+agent-fleet is currently private. Use repository issues or direct owner communication for support.
 
-Before opening an issue:
+Good support requests include:
 
-1. Search existing issues.
-2. Run `npm run check`.
-3. Include your Node.js version, OS, agent CLI versions, and relevant logs.
-4. Redact credentials, private repository names, personal hostnames, server IPs, and prompts that
-   contain private code.
+- The workflow you were trying to complete.
+- The exact command or UI action.
+- Expected behavior.
+- Actual behavior.
+- Redacted logs.
+- OS, Node.js, npm, and Worker Agent CLI versions.
 
-For architecture discussions, open a feature request and describe the workflow you want agent-fleet to
-support.
+Do not include tokens, credentials, private hostnames, private IPs, or unredacted Worker transcripts.

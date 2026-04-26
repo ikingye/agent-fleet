@@ -1,44 +1,26 @@
 # Security Policy
 
-agent-fleet executes shell commands, manages git worktrees, runs agent CLIs, and may connect to remote
-servers. Treat every deployment as a developer tool with access to source code and local credentials.
+agent-fleet is private-incubation software. Treat all issues as sensitive until the project owner decides otherwise.
 
-## Supported Versions
+## Reporting
 
-Security fixes target the latest `main` branch until the project starts publishing versioned releases.
+Report security concerns privately to the repository owner. Do not open public issues containing:
 
-## Reporting a Vulnerability
+- API keys, tokens, cookies, or credentials.
+- Private repository names or paths.
+- Private hostnames, IPs, SSH config details, or proxy endpoints.
+- Raw Worker Agent transcripts containing secrets.
 
-Do not open a public issue for vulnerabilities.
+## Supported Version
 
-Until a private security advisory channel is configured for the public repository, report sensitive
-issues to the maintainer through GitHub private contact channels. Include:
+Only the current `main` branch is supported during private incubation.
 
-- Affected commit or version.
-- Reproduction steps.
-- Impact.
-- Whether credentials, source code, or remote machines can be exposed.
+## Security Expectations
 
-## Sensitive Data Rules
+- Keep `.env`, `.agent-fleet/`, logs, worktrees, and local state out of git.
+- Redact Worker output before sharing it.
+- Prefer least-privilege remote execution credentials.
+- Make proxy behavior explicit and domain-aware.
+- Review agent-generated code before merging.
 
-Never commit:
-
-- API keys or model provider tokens.
-- SSH private keys.
-- `.agent-fleet/` runtime state.
-- `.env` files.
-- Worktrees under `.worktrees/`.
-- Logs containing prompts, repository contents, credentials, or machine addresses.
-- Real private server IPs or hostnames in examples.
-
-## Threat Model
-
-High-risk areas include:
-
-- Prompt injection through issue text, task goals, or repository files.
-- Shell command execution by worker agents.
-- Accidental merge or push of unreviewed agent output.
-- Proxy configuration that leaks all traffic through an unintended endpoint.
-- Remote execution nodes with overly broad SSH privileges.
-
-Security-sensitive changes should include tests and a clear explanation of the expected boundary.
+Dependency review is configured for pull requests through GitHub Actions.

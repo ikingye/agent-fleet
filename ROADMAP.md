@@ -1,27 +1,36 @@
 # Roadmap
 
-## Current
+## Phase 1: Local Control Plane
 
-- Codex-first local orchestrator.
-- Git worktree creation and merge helpers.
-- Local dashboard.
-- Remote full-instance workflow for low laptop CPU use.
-- Remote node readiness checks.
+- Durable JSON control-plane state.
+- Steward decision ledger.
+- Worker command adapter with resume-id capture.
+- Web dashboard for goals, decisions, Worker sessions, corrections, and memory.
 
-## Next
+## Phase 2: Reliable Supervision
 
-- Remote worker runner that lets a local control plane dispatch work to remote hosts.
-- Claude Code adapter.
-- Gemini CLI adapter.
-- Agent run logs and task event timeline in the UI.
-- Review queue and merge decision UI.
-- Repository onboarding wizard.
-- Safer command allowlists and per-project quality gate configuration.
+- Long-running Worker monitoring.
+- Automatic resume after restart.
+- Richer Worker status events and log summaries.
+- Human review queue for high-impact decisions.
 
-## Later
+## Phase 3: Parallel Worktrees
 
-- Multi-host scheduling.
-- Cost/token budget tracking.
-- Project templates.
-- Release packaging.
-- Plugin API for additional agent CLIs and quality gates.
+- Worktree creation and ownership tracking.
+- Subtask splitting.
+- Conflict and dependency tracking.
+- Merge readiness review.
+
+## Phase 4: Remote Execution
+
+- Remote node inventory.
+- SSH execution adapter.
+- Domain-aware proxy fallback.
+- Load-aware placement of Worker Agents.
+
+## Phase 5: Learning Steward
+
+- Inspectable user and project memory.
+- Correction-driven preference learning.
+- Decision policies based on risk, reversibility, and user preferences.
+- Memory editing and deletion workflows.

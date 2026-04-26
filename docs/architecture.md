@@ -1,49 +1,33 @@
 # Architecture
 
-agent-fleet is split into a web client, API server, SQLite control plane, and service adapters.
+agent-fleet is split into a browser control plane, a local HTTP API, durable control-plane state, and Worker Agent adapters.
 
-## Runtime Components
+## Components
 
-- **React client**: dashboard for repositories, tasks, and remote nodes.
-- **Fastify server**: local HTTP API and static web serving.
-- **SQLite database**: projects, repositories, tasks, events, worktrees, agent runs, checks, reviews,
-  merge attempts, and remote hosts.
-- **CommandRunner**: the boundary for local shell commands.
-- **WorktreeManager**: creates git worktrees and merges completed branches.
-- **Agent adapters**: encapsulate worker CLIs. Codex is implemented first.
-- **QualityGate**: runs project checks.
-- **ReviewGate**: asks an agent reviewer to inspect changes before merge.
-- **RemoteHostProbe**: checks SSH and proxy readiness for remote execution nodes.
+- `src/client`: React dashboard for goals, Steward decisions, Worker sessions, corrections, and memory.
+- `src/server/http`: Fastify app, route validation, and API composition.
+- `src/server/steward`: orchestration behavior that turns human goals into decisions and Worker instructions.
+- `src/server/store`: durable state for goals, decisions, Worker sessions, corrections, memories, execution nodes, and events.
+- `src/server/workers`: process adapters for Worker Agent commands.
+- `src/shared`: TypeScript contracts shared by browser and server.
 
-## Current Execution Model
+## Current Flow
 
-The current stable path is:
+1. The browser submits a goal to `POST /api/goals`.
+2. The HTTP layer validates input and calls `StewardRuntime`.
+3. The Steward records an auditable decision.
+4. The Worker adapter launches the configured Worker command or zsh alias.
+5. The store records Worker metadata such as command, cwd, pid, resume id, status, and initial output.
+6. The browser reads `GET /api/dashboard`.
+7. Human corrections go through `POST /api/decisions/:id/corrections` and become both correction records and memory.
 
-1. Run agent-fleet locally or run the full instance on a remote server.
-2. Register repositories.
-3. Queue tasks.
-4. The orchestrator creates a git worktree from the repository root.
-5. Codex executes in the worktree.
-6. Quality and review gates run.
-7. Merge and push flow can proceed after gates pass.
+## State Model
 
-Remote hosts are currently registered and probed for readiness. The full remote worker scheduler is a
-roadmap item.
+The first implementation uses `.agent-fleet/control-plane.json`. This keeps the project easy to inspect and test. A future database can preserve the same domain records while improving concurrency, querying, and log volume.
 
-## Safety Boundaries
+## Boundary Rules
 
-- Runtime state stays under `.agent-fleet/`.
-- Worktrees stay under `.worktrees/`.
-- Command execution is wrapped by `CommandRunner`.
-- Agent-specific behavior stays inside adapters.
-- Remote proxy fallback is explicit; direct traffic remains direct by default.
-
-## Data Flow
-
-```text
-Browser -> Fastify routes -> RepositoryStore -> SQLite
-                         -> Orchestrator -> WorktreeManager -> git
-                                       -> AgentAdapter -> Codex CLI
-                                       -> QualityGate -> npm/test commands
-                                       -> ReviewGate -> reviewer agent
-```
+- HTTP routes should not directly spawn Worker commands.
+- Worker adapters should not own product decision logic.
+- Steward logic should record decisions before launching irreversible or externally visible work.
+- Shared types should remain serializable and browser-safe.

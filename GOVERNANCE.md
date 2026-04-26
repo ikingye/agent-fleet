@@ -1,24 +1,22 @@
 # Governance
 
-agent-fleet is currently maintained by the repository owner with community input through issues and
-pull requests.
+agent-fleet is owner-led during private incubation.
 
 ## Decision Making
 
-Maintainers prioritize:
+The repository owner makes final product, architecture, release, and publication decisions.
 
-1. Local and remote machine safety.
-2. Reliable git worktree isolation.
-3. Clear quality gates before merge and push.
-4. Agent adapter boundaries that make Codex, Claude Code, Gemini CLI, and future agents replaceable.
-5. Practical workflows over speculative platform features.
+Technical decisions should be recorded in code, tests, docs, or issues when they affect future contributors or Worker Agent behavior.
 
-Large changes should start as an issue or design discussion before implementation.
+## Publication
 
-## Maintainer Responsibilities
+The project remains private until the owner intentionally removes `private: true`, reviews security posture, verifies community files, and confirms the license and contributor process.
 
-- Keep `main` passing CI.
-- Review security-sensitive changes carefully.
-- Avoid merging generated or agent-written code without tests and review.
-- Keep public documentation free of private infrastructure details.
-- Label and close issues with clear rationale.
+## Maintainer Duties
+
+Maintainers are responsible for:
+
+- Keeping CI green.
+- Reviewing agent-generated code before merge.
+- Protecting private user data and local execution details.
+- Preserving the Steward Agent / Worker Agent product model.

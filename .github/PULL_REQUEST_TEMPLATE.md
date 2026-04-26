@@ -6,7 +6,7 @@
 
 - [ ] `npm run check`
 - [ ] `npm run build`
-- [ ] `npm run test:e2e` when UI, routing, or browser behavior changes
+- [ ] Browser/manual verification when UI, routing, or interaction behavior changes
 
 ## Safety
 

@@ -1,126 +1,100 @@
 # agent-fleet
 
-agent-fleet is a local-first control plane for coordinating coding agents across projects, git
-worktrees, quality gates, and remote execution nodes.
+agent-fleet is a private-incubation, public-ready Steward Agent control plane for coordinating coding agents across projects, worktrees, sessions, and execution machines.
 
-The goal is to make agent throughput limited by available model tokens and compute, not by manual
-project switching. A human gives goals; agent-fleet prepares isolated worktrees, dispatches worker
-agents, runs checks, supports review, and keeps project progress visible in a web UI.
+The project is not open source yet. It is maintained with public-project hygiene now so the repository can become public later without restructuring its docs, safety process, or contributor expectations.
 
-> Status: alpha. Codex is the first supported worker adapter. Claude Code and Gemini CLI adapters are
-> planned.
+## What It Solves
 
-## What It Does Today
+agent-fleet removes the human bottleneck from multi-agent development:
 
-- Local web dashboard for repositories, task queue, and remote node readiness.
-- SQLite control plane stored under `.agent-fleet/`.
-- Git worktree creation and merge helpers for concurrent development.
-- Codex worker adapter for task execution and review.
-- Quality gates for build/test commands.
-- GitHub issue import through `gh`.
-- Remote node registration and readiness checks for SSH, toolchain, npm direct access, and proxy
-  fallback for GitHub/OpenAI/Google-style endpoints.
-- Remote full-instance workflow for keeping laptop CPU load low.
+- One Steward Agent becomes the only human-facing interface.
+- Worker Agents such as Codex or Claude receive instructions from the Steward as if it were the owner.
+- Resume ids, process ids, decisions, corrections, and project context become durable state.
+- Parallel work can be coordinated through git worktrees instead of one terminal checkout.
+- Heavy agent work can later move to remote machines while the local Mac remains usable.
 
-## Requirements
+## Current Status
 
-- Node.js 24 or newer.
-- npm 10 or newer.
-- git.
-- Optional: `gh` for GitHub issue import.
-- Optional: Codex CLI for worker execution.
-- Optional: Playwright browser dependencies for e2e tests.
+This repository currently contains the first local control-plane slice:
+
+- Fastify API for goals, dashboard state, and decision corrections.
+- React dashboard for Steward intake, decisions, Worker sessions, and memory.
+- JSON-backed local state at `.agent-fleet/control-plane.json`.
+- Command Worker adapter that can launch a real executable or a zsh alias such as `codexyoloproxy`.
+
+Remote execution, automatic worktree scheduling, resumable long-running supervision, and richer learning memory are roadmap items.
 
 ## Quick Start
 
-```bash
-git clone https://github.com/ikingye/agent-fleet.git
-cd agent-fleet
+Requirements:
+
+- Node.js 24+
+- npm 10+
+- A Worker command on PATH or as a zsh alias, for example `codexyoloproxy`
+
+Install and verify:
+
+```sh
 npm ci
+npm run check
 npm run build
-AGENT_FLEET_HOST=127.0.0.1 AGENT_FLEET_PORT=8787 npm start
 ```
 
-Open:
+Run locally:
 
-```text
-http://127.0.0.1:8787
-```
-
-For development:
-
-```bash
+```sh
 npm run dev
 ```
 
-This starts the Fastify API and Vite web UI.
-
-## Remote Offload
-
-For heavy parallel work, run the full agent-fleet instance on a Linux server and access the UI through
-an SSH tunnel. This keeps builds, tests, Playwright, worktrees, and worker agents off your laptop.
-
-```bash
-ssh -fN -L 127.0.0.1:8788:127.0.0.1:8787 remote-dev
-```
-
-Open:
-
-```text
-http://127.0.0.1:8788
-```
-
-See [docs/remote/macos-offload.md](docs/remote/macos-offload.md) for proxy fallback and SSH tunnel
-details.
+The API listens on `127.0.0.1:8787` by default and the Vite web app listens on `127.0.0.1:5173`.
 
 ## Configuration
 
-Runtime configuration is environment-variable based:
+Copy `.env.example` if you want local overrides:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `AGENT_FLEET_HOST` | `127.0.0.1` | HTTP bind host. |
-| `AGENT_FLEET_PORT` | `8787` | HTTP bind port. |
-| `AGENT_FLEET_DB` | `.agent-fleet/agent-fleet.sqlite` | SQLite database path. |
+```sh
+AGENT_FLEET_HOST=127.0.0.1
+AGENT_FLEET_PORT=8787
+AGENT_FLEET_STATE=.agent-fleet/control-plane.json
+AGENT_FLEET_WORKER_COMMAND=codexyoloproxy
+AGENT_FLEET_WORKER_CWD=/path/to/project
+```
 
-Copy [.env.example](.env.example) if you want a local template.
+See [docs/configuration.md](docs/configuration.md) for details.
 
-## Common Commands
+## Repository Layout
 
-```bash
+```text
+src/client/                 React dashboard
+src/server/http/            Fastify app and HTTP route tests
+src/server/steward/         Steward Agent orchestration runtime
+src/server/store/           Durable control-plane store
+src/server/workers/         Worker Agent process adapters
+src/shared/                 Shared TypeScript contracts
+docs/                       Product and engineering docs
+.github/                    CI, issue templates, PR template
+```
+
+Root-level `package.json`, `tsconfig.*.json`, `vite.config.ts`, `vitest.config.ts`, and `index.html` are normal for a Vite + TypeScript project. Application logic should live under `src`.
+
+## Development
+
+Common commands:
+
+```sh
 npm run typecheck
-npm run lint
 npm test
 npm run check
 npm run build
-npm run test:e2e
 ```
 
-Install Playwright browsers before running e2e tests on a new machine:
+See [docs/development.md](docs/development.md) and [AGENTS.md](AGENTS.md) before making code changes.
 
-```bash
-npx playwright install --with-deps chromium
-```
+## Safety
 
-## Documentation
-
-- [Getting started](docs/getting-started.md)
-- [Architecture](docs/architecture.md)
-- [Configuration](docs/configuration.md)
-- [Remote macOS offload](docs/remote/macos-offload.md)
-- [Development guide](docs/development.md)
-- [Roadmap](ROADMAP.md)
-
-## Community
-
-agent-fleet is intended to become a public, community-maintained developer tool. Contributions should
-keep the system pragmatic, testable, and safe for local and remote developer machines.
-
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
-- Read [SECURITY.md](SECURITY.md) before reporting vulnerabilities.
-- Use GitHub Issues for bugs and feature requests.
-- Keep credentials, SSH keys, tokens, local state, logs, and worktrees out of commits.
+Do not commit `.agent-fleet/`, local worktrees, terminal logs, tokens, private hostnames, private IPs, or Worker session transcripts with secrets. See [SECURITY.md](SECURITY.md).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. The repository remains private until the owner intentionally publishes it.

@@ -1,82 +1,45 @@
-import type {
-  DispatcherStatus,
-  RemoteHost,
-  RemoteHostDiagnostics,
-  RemoteProxyMode,
-  Repository,
-  Task,
-  TaskEvent
-} from "../shared/types.js";
+import type { DashboardData, DecisionCorrection, Goal } from "../shared/types.js";
 
-export interface DashboardData {
-  repositories: Repository[];
-  tasks: Task[];
-  taskEventsByTaskId: Record<string, TaskEvent[]>;
-  dispatcher: DispatcherStatus;
-  remoteHosts: RemoteHost[];
-}
-
-export interface CreateRepositoryPayload {
-  projectName: string;
-  name: string;
-  rootPath: string;
-  remoteUrl: string | null;
-  mainBranch: string;
-}
-
-export interface CreateRemoteHostPayload {
-  name: string;
-  sshHost: string;
-  workRoot: string;
-  proxyMode: RemoteProxyMode;
-  proxyUrl: string | null;
-  localForwardPort: number | null;
-}
-
-export interface OrchestratorRunResult {
-  ran: boolean;
-}
-
-const defaultDispatcherStatus: DispatcherStatus = {
-  enabled: false,
-  running: false,
-  intervalMs: 5000,
-  lastRunStartedAt: null,
-  lastRunFinishedAt: null,
-  lastRunHadTask: null,
-  lastError: null
+const emptyDashboard: DashboardData = {
+  goals: [],
+  decisions: [],
+  workerSessions: [],
+  corrections: [],
+  memories: [],
+  executionNodes: [],
+  events: []
 };
+
+export interface CreateGoalPayload {
+  projectName: string;
+  title: string;
+  body: string;
+}
 
 export async function fetchDashboard(): Promise<DashboardData> {
   const response = await fetch("/api/dashboard");
 
   if (!response.ok) {
-    throw new Error("Failed to fetch dashboard data.");
+    throw new Error("Failed to fetch dashboard.");
   }
 
-  const data = (await response.json()) as DashboardData;
+  const data = (await response.json()) as Partial<DashboardData>;
 
   return {
+    ...emptyDashboard,
     ...data,
-    taskEventsByTaskId: data.taskEventsByTaskId ?? {},
-    dispatcher: data.dispatcher ?? defaultDispatcherStatus
+    goals: data.goals ?? [],
+    decisions: data.decisions ?? [],
+    workerSessions: data.workerSessions ?? [],
+    corrections: data.corrections ?? [],
+    memories: data.memories ?? [],
+    executionNodes: data.executionNodes ?? [],
+    events: data.events ?? []
   };
 }
 
-export async function runOrchestratorOnce(): Promise<OrchestratorRunResult> {
-  const response = await fetch("/api/orchestrator/run-once", {
-    method: "POST"
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to run orchestrator.");
-  }
-
-  return response.json() as Promise<OrchestratorRunResult>;
-}
-
-export async function createRepository(payload: CreateRepositoryPayload): Promise<Repository> {
-  const response = await fetch("/api/repositories", {
+export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {
+  const response = await fetch("/api/goals", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
@@ -85,52 +48,24 @@ export async function createRepository(payload: CreateRepositoryPayload): Promis
   });
 
   if (!response.ok) {
-    throw new Error("Failed to register repository.");
+    throw new Error("Failed to create goal.");
   }
 
-  return response.json() as Promise<Repository>;
+  return response.json() as Promise<Goal>;
 }
 
-export async function createTask(repositoryId: string, title: string, goal: string): Promise<Task> {
-  const response = await fetch("/api/tasks", {
+export async function correctDecision(decisionId: string, body: string): Promise<DecisionCorrection> {
+  const response = await fetch(`/api/decisions/${decisionId}/corrections`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ repositoryId, title, goal })
+    body: JSON.stringify({ body })
   });
 
   if (!response.ok) {
-    throw new Error("Failed to queue task.");
+    throw new Error("Failed to send correction.");
   }
 
-  return response.json() as Promise<Task>;
-}
-
-export async function createRemoteHost(payload: CreateRemoteHostPayload): Promise<RemoteHost> {
-  const response = await fetch("/api/remote-hosts", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to register remote host.");
-  }
-
-  return response.json() as Promise<RemoteHost>;
-}
-
-export async function checkRemoteHost(id: string): Promise<RemoteHostDiagnostics> {
-  const response = await fetch(`/api/remote-hosts/${id}/check`, {
-    method: "POST"
-  });
-
-  if (!response.ok) {
-    throw new Error("Failed to check remote host.");
-  }
-
-  return response.json() as Promise<RemoteHostDiagnostics>;
+  return response.json() as Promise<DecisionCorrection>;
 }

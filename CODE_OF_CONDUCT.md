@@ -1,26 +1,11 @@
 # Code of Conduct
 
-agent-fleet is a technical community for building reliable agent orchestration software.
+agent-fleet follows a simple contributor standard during private incubation:
 
-## Expected Behavior
+- Be direct, respectful, and technical.
+- Assume good intent, but require evidence for technical claims.
+- Do not share private user data, credentials, hostnames, IPs, or unredacted logs.
+- Keep disagreement focused on the work.
+- Do not use automation or agents to spam issues, PRs, or maintainers.
 
-- Be direct, factual, and respectful.
-- Assume contributors are trying to improve the project.
-- Critique code, architecture, and tradeoffs rather than people.
-- Keep issue and pull request discussions focused on actionable outcomes.
-- Respect user security, privacy, credentials, and local machine safety.
-
-## Unacceptable Behavior
-
-- Harassment, threats, discriminatory language, or personal attacks.
-- Publishing private credentials, keys, tokens, server addresses, logs, or personal data.
-- Repeated off-topic arguing after maintainers have redirected the discussion.
-- Intentionally disruptive behavior in issues, pull requests, discussions, or release channels.
-
-## Enforcement
-
-Maintainers may edit or delete comments, close issues, block users, or restrict participation when
-behavior harms the project or its contributors.
-
-Report conduct concerns privately through the security contact in [SECURITY.md](SECURITY.md) when
-public reporting would expose sensitive information.
+The owner may remove access for behavior that makes the project unsafe or unproductive.

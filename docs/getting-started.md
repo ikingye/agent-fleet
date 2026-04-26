@@ -1,73 +1,37 @@
 # Getting Started
 
-This guide runs agent-fleet on one machine. For remote offload, see
-[remote/macos-offload.md](remote/macos-offload.md).
+## 1. Install
 
-## Install
-
-```bash
-git clone https://github.com/ikingye/agent-fleet.git
-cd agent-fleet
+```sh
 npm ci
-npm run build
 ```
 
-## Start
+## 2. Configure A Worker Command
 
-```bash
-AGENT_FLEET_HOST=127.0.0.1 AGENT_FLEET_PORT=8787 npm start
+By default agent-fleet uses `codexyoloproxy`.
+
+You can point to another command:
+
+```sh
+AGENT_FLEET_WORKER_COMMAND=codexyoloproxy
+AGENT_FLEET_WORKER_CWD=/Users/you/code/project/agent-fleet
 ```
 
-Open:
+The command can be a real executable on PATH or a zsh alias loaded by an interactive shell.
 
-```text
-http://127.0.0.1:8787
+## 3. Start The App
+
+```sh
+npm run dev
 ```
 
-## Add a Repository
+Open the Vite URL and submit a goal. The Steward will record a decision and try to start a Worker session.
 
-Use the API while the UI repository onboarding flow is still early:
+## 4. Review The Dashboard
 
-```bash
-curl -X POST http://127.0.0.1:8787/api/repositories \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "projectName": "Example",
-    "name": "example-repo",
-    "rootPath": "/absolute/path/to/example-repo",
-    "remoteUrl": "https://github.com/example/example-repo.git",
-    "mainBranch": "main"
-  }'
-```
+Use the dashboard to inspect:
 
-## Queue a Task
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/tasks \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "repositoryId": "<repository-id>",
-    "title": "Add health endpoint",
-    "goal": "Implement the endpoint, add tests, and keep existing checks green."
-  }'
-```
-
-Run one orchestrator cycle:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/orchestrator/run-once
-```
-
-## Run Checks
-
-```bash
-npm run check
-npm run build
-```
-
-For e2e tests on a new Linux machine:
-
-```bash
-npx playwright install --with-deps chromium
-npm run test:e2e
-```
+- Goals and status.
+- Steward decisions.
+- Worker command, pid, resume id, status, and initial output.
+- Human corrections and learned memory.

@@ -1,7 +1,10 @@
 # Maintainers
 
-Current maintainer:
+agent-fleet is currently maintained by the repository owner during private incubation.
 
-- GitHub: `@ikingye`
+Before adding maintainers, define:
 
-Maintainer duties include triage, release decisions, security response, and final merge decisions.
+- Review authority.
+- Release authority.
+- Security contact expectations.
+- Access to remote execution infrastructure.
