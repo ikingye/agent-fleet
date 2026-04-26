@@ -148,6 +148,10 @@ h3 {
   grid-column: 1 / -1;
 }
 
+.worktree-panel {
+  grid-column: span 2;
+}
+
 .panel-heading {
   border-bottom: 1px solid #e3e9e6;
   padding: 18px 18px 15px;
@@ -264,6 +268,12 @@ h3 {
   color: #275f30;
 }
 
+.status-ready,
+.status-planned {
+  background: #e2f1ff;
+  color: #1d5689;
+}
+
 .status-blocked,
 .status-failed {
   background: #ffe0d5;
@@ -318,11 +328,59 @@ h3 {
   margin-top: 4px;
 }
 
+.copy-command {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 8px;
+  border: 1px solid #cad5d0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #f4f7f5;
+  color: #182126;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.resource-row {
+  align-items: stretch;
+}
+
+.resource-facts {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.resource-facts div {
+  display: grid;
+  gap: 2px;
+}
+
+.resource-facts dt {
+  color: #61716c;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.resource-facts dd {
+  margin: 0;
+  color: #384843;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 980px) {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
+  .worktree-panel,
   .memory-panel {
     grid-column: auto;
   }

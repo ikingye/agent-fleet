@@ -51,7 +51,31 @@ const dashboard = {
   ],
   corrections: [],
   memories: [],
-  executionNodes: [],
+  executionNodes: [
+    {
+      id: "node-1",
+      name: "remote-build-1",
+      kind: "remote",
+      status: "ready",
+      sshHost: "worker@remote-build-1.internal",
+      workRoot: "/srv/agent-fleet/worktrees",
+      proxyUrl: "https://proxy.agent-fleet.internal",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z"
+    }
+  ],
+  worktreeAssignments: [
+    {
+      id: "worktree-1",
+      workerSessionId: "worker-1",
+      repositoryPath: "/repos/agent-fleet",
+      worktreePath: "/worktrees/agent-fleet-dashboard-execution",
+      branchName: "steward/dashboard-execution",
+      status: "planned",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:00:00.000Z"
+    }
+  ],
   events: []
 };
 
@@ -81,7 +105,7 @@ describe("App", () => {
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.getByText("codexyoloproxy")).toBeInTheDocument();
     expect(screen.getByText("pid 4242")).toBeInTheDocument();
-    expect(screen.getByText("resume-1")).toBeInTheDocument();
+    expect(screen.getByText("codexyoloproxy resume resume-1")).toBeInTheDocument();
   });
 
   it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
@@ -90,6 +114,17 @@ describe("App", () => {
     expect(await screen.findByText("Human Review")).toBeInTheDocument();
     expect(screen.getByText("Running Workers")).toBeInTheDocument();
     expect(screen.getByText("Memory Items")).toBeInTheDocument();
+  });
+
+  it("renders worktree assignments and remote execution nodes", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Worktrees" })).toBeInTheDocument();
+    expect(screen.getByText("steward/dashboard-execution")).toBeInTheDocument();
+    expect(screen.getByText("/worktrees/agent-fleet-dashboard-execution")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
+    expect(screen.getByText("worker@remote-build-1.internal")).toBeInTheDocument();
+    expect(screen.getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
   });
 
   it("submits a new goal to the Steward Agent", async () => {

@@ -21,6 +21,10 @@ function actions(decision: StewardDecision): string[] {
   }
 }
 
+function resumeCommand(command: string, resumeId: string): string {
+  return `${command} resume ${resumeId}`;
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState<DashboardData>(emptyDashboard);
   const [projectName, setProjectName] = useState("");
@@ -40,6 +44,7 @@ export function App() {
     () => dashboard.workerSessions.filter((session) => session.status === "running").length,
     [dashboard.workerSessions]
   );
+  const remoteNodes = useMemo(() => dashboard.executionNodes.filter((node) => node.kind === "remote"), [dashboard.executionNodes]);
   const memoryCount = dashboard.memories.length;
 
   async function refresh() {
@@ -257,10 +262,80 @@ export function App() {
                     <p>{session.command}</p>
                     <p>{session.cwd}</p>
                     {session.pid ? <p>pid {session.pid}</p> : null}
-                    {session.resumeId ? <p>{session.resumeId}</p> : null}
+                    {session.resumeId ? <code className="copy-command">{resumeCommand(session.command, session.resumeId)}</code> : null}
                     {session.status === "failed" && session.lastOutput ? <p>{session.lastOutput}</p> : null}
                   </div>
                   <span className={`pill status-${session.status}`}>{session.status}</span>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="panel worktree-panel">
+          <div className="panel-heading">
+            <p className="eyebrow">Isolation</p>
+            <h2>Worktrees</h2>
+          </div>
+          <div className="item-list">
+            {dashboard.worktreeAssignments.length === 0 ? (
+              <p className="empty-copy">No worktree assignments yet.</p>
+            ) : (
+              dashboard.worktreeAssignments.map((assignment) => (
+                <article className="item-row resource-row" key={assignment.id}>
+                  <div>
+                    <h3>{assignment.branchName}</h3>
+                    <dl className="resource-facts">
+                      <div>
+                        <dt>path</dt>
+                        <dd>{assignment.worktreePath}</dd>
+                      </div>
+                      <div>
+                        <dt>repo</dt>
+                        <dd>{assignment.repositoryPath}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                  <span className={`pill status-${assignment.status}`}>{assignment.status}</span>
+                </article>
+              ))
+            )}
+          </div>
+        </section>
+
+        <section className="panel node-panel">
+          <div className="panel-heading">
+            <p className="eyebrow">Remote Capacity</p>
+            <h2>Remote Nodes</h2>
+          </div>
+          <div className="item-list">
+            {remoteNodes.length === 0 ? (
+              <p className="empty-copy">No remote execution nodes registered.</p>
+            ) : (
+              remoteNodes.map((node) => (
+                <article className="item-row resource-row" key={node.id}>
+                  <div>
+                    <h3>{node.name}</h3>
+                    <dl className="resource-facts">
+                      {node.sshHost ? (
+                        <div>
+                          <dt>ssh</dt>
+                          <dd>{node.sshHost}</dd>
+                        </div>
+                      ) : null}
+                      {node.proxyUrl ? (
+                        <div>
+                          <dt>proxy</dt>
+                          <dd>{node.proxyUrl}</dd>
+                        </div>
+                      ) : null}
+                      <div>
+                        <dt>root</dt>
+                        <dd>{node.workRoot}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                  <span className={`pill status-${node.status}`}>{node.status}</span>
                 </article>
               ))
             )}
