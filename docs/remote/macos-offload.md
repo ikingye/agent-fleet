@@ -79,6 +79,15 @@ For direct mainland access, omit these proxy env vars. This keeps direct-capable
 
 ## Registering Execution Nodes
 
+Recommended "add remote server" flow:
+
+1. Prepare SSH reachability from the Mac to the remote host, including any required proxy forwarding.
+2. Install and authenticate the Worker runtime, such as Codex CLI.
+3. Configure GitHub access on the remote host so stateless Workers can fetch and push Worker refs for private repositories. See [GitHub Access for Remote Workers](codex-bootstrap.md#github-access-for-remote-workers).
+4. Verify the remote work root exists and is disposable scratch space.
+5. Register the execution node with `workRoot`, `proxyUrl`, tags, and capacity.
+6. Dispatch a small remote Worker only after SSH, Worker runtime auth, GitHub auth, proxy, and workspace provisioning have all passed.
+
 Remote execution nodes are registered through the control-plane API. Posting the same `name` again updates the existing node instead of creating a duplicate:
 
 ```sh
@@ -165,13 +174,13 @@ Before launching an SSH-backed Worker, the Steward prepares the selected remote 
 - The Steward resolves `HEAD`, derives deterministic refs from the Worker Name, and pushes the Worker ref to `origin`.
 - Worker refs use `refs/heads/agent-fleet/workers/<worker-name>`.
 - Returned result refs use `refs/heads/agent-fleet/results/<worker-name>`.
-- The remote host is treated as stateless scratch space. It clones or fetches from `origin`, fetches the Worker ref, and checks out a local branch from `FETCH_HEAD`.
+- The remote host is treated as stateless scratch space. It must have GitHub access for the repository, clones or fetches from `origin`, fetches the Worker ref, and checks out a local branch from `FETCH_HEAD`.
 - If the remote cwd exists but is non-empty and is not a git checkout, provisioning blocks instead of deleting or overwriting it.
 - If the local workspace is not in git, has no origin URL, is dirty, cannot push the Worker ref, or cannot prepare the remote checkout, provisioning records a clear blocked Worker session/checkpoint instead of pretending that the remote cwd is usable.
 
 After remote execution, the inbound sync path fetches the returned result ref from `origin` and checks it out to `agent-fleet/results/<worker-name>` for review. The review/merge Worker is responsible for deciding how that result branch is merged.
 
-The default path intentionally does not rsync project directories, copy local uncommitted changes, copy secrets, or clean remote disks. `rsync` is only a fallback for future workflows that explicitly opt out of Git-ref sync. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
+The default path intentionally does not rsync project directories, copy local uncommitted changes, copy secrets, copy the owner's personal private SSH key, or clean remote disks. Prefer a repository deploy key with write access or a dedicated machine user SSH key for remote GitHub access. `rsync` is only a fallback for future workflows that explicitly opt out of Git-ref sync. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
 
 Owner-facing audit records include whether provisioning prepared the remote workspace or blocked Worker launch. When blocked, the Worker session is recorded as failed with command `remote workspace provisioning`, and the checkpoint explains what must be fixed, such as adding a git origin or preparing remote authentication.
 

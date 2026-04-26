@@ -98,6 +98,94 @@ ssh aicp-hhht-231 'chmod 600 ~/.codex/auth.json && codex login status'
 
 Never include auth file contents in logs, Worker prompts, dashboard events, or final reports.
 
+## GitHub Access for Remote Workers
+
+Remote Workers are stateless, but the default remote provisioning path is not networkless. agent-fleet pushes a Worker ref to `origin`, the remote host clones or fetches that ref, and the remote Worker later pushes a result ref. For private GitHub repositories, the remote host needs its own GitHub credential with read and write access to the target repository.
+
+Recommended credential choices:
+
+- Best for one repository: a GitHub deploy key created for this remote Worker pool, added to the repository with write access.
+- Best for several private repositories: a dedicated machine user with its own SSH key and narrowly scoped repository access.
+- Acceptable for interactive setup: GitHub CLI device login on the remote host if the organization allows it.
+- Avoid: copying the owner's personal private SSH key to the remote host. Do not paste private keys into logs, Worker prompts, dashboard notes, shell history, or final reports.
+
+Generate a dedicated SSH key on the remote host, or copy only an owner-approved deploy key:
+
+```sh
+ssh aicp-hhht-231 '
+  umask 077
+  mkdir -p ~/.ssh
+  test -f ~/.ssh/id_ed25519_agent_fleet_github ||
+    ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519_agent_fleet_github -N "" -C "agent-fleet remote worker $(hostname)"
+  cat ~/.ssh/id_ed25519_agent_fleet_github.pub
+'
+```
+
+Add the printed public key to GitHub:
+
+- Repository deploy key: GitHub repository -> Settings -> Deploy keys -> Add deploy key -> enable write access.
+- Machine user: add the public key to the machine user's GitHub account, then grant that user the minimum repository access required.
+
+Configure the remote host to use the dedicated key for GitHub and pin GitHub host keys without printing secrets:
+
+```sh
+ssh aicp-hhht-231 '
+  umask 077
+  mkdir -p ~/.ssh
+  touch ~/.ssh/config ~/.ssh/known_hosts
+  chmod 600 ~/.ssh/config ~/.ssh/known_hosts
+  grep -q "Host github.com" ~/.ssh/config || cat >> ~/.ssh/config <<EOF
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile ~/.ssh/id_ed25519_agent_fleet_github
+  IdentitiesOnly yes
+EOF
+  ssh-keygen -F github.com >/dev/null || ssh-keyscan github.com >> ~/.ssh/known_hosts
+'
+```
+
+Verify authentication without revealing secrets:
+
+```sh
+ssh aicp-hhht-231 'ssh -T git@github.com'
+ssh aicp-hhht-231 'git ls-remote git@github.com:OWNER/REPO.git HEAD'
+```
+
+`ssh -T git@github.com` usually exits with status `1` after printing a successful authentication greeting because GitHub does not provide shell access. Treat the greeting as success; treat permission denied or unknown key output as a blocker.
+
+Verify write access by pushing and deleting a scratch branch. Use a test repository when possible, or a short-lived branch in the target repository:
+
+```sh
+ssh aicp-hhht-231 '
+  set -eu
+  scratch_dir=$(mktemp -d)
+  branch="agent-fleet/remote-auth-smoke/$(hostname)-$(date +%Y%m%d%H%M%S)"
+  git clone --depth 1 git@github.com:OWNER/REPO.git "$scratch_dir/repo"
+  cd "$scratch_dir/repo"
+  git switch -c "$branch"
+  git -c user.name="agent-fleet remote smoke" -c user.email="agent-fleet@example.invalid" \
+    commit --allow-empty -m "agent-fleet remote auth smoke"
+  git push origin "HEAD:refs/heads/$branch"
+  git push origin --delete "$branch"
+  rm -rf "$scratch_dir"
+'
+```
+
+Optional HTTPS and proxy checks are useful when SSH works locally but the remote network has filtered access:
+
+```sh
+ssh aicp-hhht-231 'curl -I https://github.com'
+ssh aicp-hhht-231 'HTTPS_PROXY=http://127.0.0.1:1080 curl -I https://github.com'
+ssh aicp-hhht-231 'git -c http.proxy=http://127.0.0.1:1080 ls-remote https://github.com/OWNER/REPO.git HEAD'
+```
+
+Fallbacks when normal GitHub SSH is blocked:
+
+- Use GitHub CLI device login on the remote host, then verify with `gh auth status` and `git ls-remote`. This is interactive and should be recorded as an operator action.
+- Use a git bundle for a one-off read-only bootstrap when fetch access is unavailable. This does not support the normal result-ref push path, so it is not the recommended steady state.
+- Temporarily change `origin` to a reachable internal mirror or alternate Git remote only for the affected workspace, then restore the canonical GitHub origin before review/merge. Record the workaround in the Worker session notes.
+
 ## Proxy Forwarding
 
 For remote hosts that need the Mac's local proxy for overseas domains, configure SSH remote forwarding:
@@ -167,12 +255,12 @@ As of 2026-04-26:
 - Node is installed at `/usr/local/bin/node`, version `v24.15.0`.
 - npm is installed at `/usr/local/bin/npm`, version `11.12.1`.
 - `@openai/codex@0.125.0` is installed globally under `/opt/node-v24/lib`.
-- `codex login status` reports `Not logged in`.
-- `~/.codex` exists remotely, but no `auth.json` was listed.
+- Current context says remote Codex login has succeeded.
 - SSH config includes `RemoteForward 127.0.0.1:1080 127.0.0.1:1080`.
 - Remote `127.0.0.1:1080` is listening and accepts TCP connections.
 - A proxied `curl -I https://api.openai.com` reaches Cloudflare through the forwarded proxy; direct access did not produce a response during the bounded probe.
 - `https://www.baidu.com` responds directly.
+- GitHub SSH access is still missing and must be configured before private-repository remote provisioning can fetch or push Worker refs.
 - `nvidia-smi` is not installed.
 
-The remaining blocker for real remote Codex dispatch on this node is authentication. Workspace provisioning now expects the target workspace to be fetchable from git.
+The remaining blocker for real remote Codex dispatch on this node is GitHub SSH authentication. Workspace provisioning expects the target workspace to be fetchable from git and the result ref to be pushable back to `origin`.
