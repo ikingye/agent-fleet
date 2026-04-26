@@ -172,4 +172,6 @@ Owner-facing audit records include whether provisioning prepared the remote work
 
 ## Readiness Model
 
-`src/server/remote/remoteNodeReadiness.ts` contains a pure readiness check for remote node facts the Steward already knows, such as status, SSH host, work root, and whether a proxy is required. It does not open SSH connections or probe the network; future adapters should record probe results separately and pass those facts into the readiness helper.
+`src/server/remote/remoteNodeReadiness.ts` contains a pure readiness check for remote node facts the Steward already knows, such as status, SSH host, work root, and whether a proxy is required. API routes can also run a live SSH probe through `src/server/remote/remoteNodeProbe.ts` to check that the remote work root exists and the configured Worker command is available. Recovery reconcile uses a dashboard-aware process probe that checks local sessions locally and remote sessions by probing the recorded remote PID over SSH.
+
+Probe results are still local control-plane facts. Remote machines remain stateless compute resources; they do not own durable Worker session state.

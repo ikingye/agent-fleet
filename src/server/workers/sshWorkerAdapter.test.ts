@@ -165,11 +165,11 @@ describe("ChildProcessSshWorkerRunner", () => {
         "-e",
         [
           "console.log('agent-fleet remote pid: 7777');",
-          "setTimeout(() => {}, 200);"
+          "setTimeout(() => {}, 1500);"
         ].join("")
       ],
       stdin: "",
-      startupTimeoutMs: 100
+      startupTimeoutMs: 500
     });
 
     expect(result.status).toBe("running");

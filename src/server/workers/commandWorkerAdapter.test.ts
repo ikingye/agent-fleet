@@ -1,8 +1,11 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { CommandWorkerAdapter, parseWorkerCommandArgs } from "./commandWorkerAdapter.js";
+
+const zshIt = spawnSync("zsh", ["--version"], { stdio: "ignore" }).status === 0 ? it : it.skip;
 
 describe("CommandWorkerAdapter", () => {
   it("marks the Worker session failed when the requested command is unavailable", async () => {
@@ -156,7 +159,7 @@ describe("CommandWorkerAdapter", () => {
     expect(parseWorkerCommandArgs("exec '--model=gpt-5 codex' -")).toEqual(["exec", "--model=gpt-5 codex", "-"]);
   });
 
-  it("runs a zsh alias when the Worker command is an interactive shell alias", async () => {
+  zshIt("runs a zsh alias when the Worker command is an interactive shell alias", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-alias-"));
     const originalHome = process.env.HOME;
 
@@ -197,7 +200,7 @@ describe("CommandWorkerAdapter", () => {
     }
   });
 
-  it("waits long enough for slower zsh startup before resolving an alias", async () => {
+  zshIt("waits long enough for slower zsh startup before resolving an alias", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-slow-alias-"));
     const originalHome = process.env.HOME;
 
