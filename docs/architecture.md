@@ -32,6 +32,8 @@ Worker session lifecycle is durable state, not terminal state. External Worker a
 
 After a Steward Agent restart, a supervisor loop should load `GET /api/dashboard` or call the store directly, pass running or starting Worker sessions to `reconcileWorkerSessions`, and provide an injected process probe for the execution environment. The reconcile module does not probe real processes itself; it maps probe observations to deterministic status updates, such as marking a running session `paused` when its recorded process is missing but a resume id exists. Production runners should call the same store update path so dashboard state and audit history stay inspectable.
 
+Steward Agent checkpoints are append-only durable notes for reconstructing coordinator state after compact, resume, or terminal failures. `POST /api/steward-checkpoints` records the reason, summary, next action, and related goal or Worker session ids. `GET /api/recovery` derives the active goals, active Worker sessions, resume commands, worktree metadata, latest checkpoint, and next actions from durable control-plane state. Worker sessions and worktree assignments remain the source of truth; checkpoints should not duplicate process metadata.
+
 ## Worktrees
 
 Worktree planning is metadata-only. `planWorktree` derives the intended branch, path, and human-readable command for a Worker Agent assignment without touching git or the filesystem.

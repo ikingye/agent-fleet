@@ -173,6 +173,109 @@ describe("API routes", () => {
     }
   });
 
+  it("records Steward checkpoints through the API and exposes a recovery report", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codexyoloproxy",
+      defaultWorkerCwd: "/repo/agent-fleet/.worktrees/recovery",
+      defaultRepositoryPath: "/repo/agent-fleet",
+      worktreeRoot: "/repo/agent-fleet/.worktrees",
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          title: "Recover Steward context",
+          body: "Make compact failures recoverable from durable state."
+        }
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const goalId = dashboard.goals[0].id;
+      const workerSessionId = dashboard.workerSessions[0].id;
+
+      const checkpointResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward-checkpoints",
+        payload: {
+          reason: "crash",
+          summary: "Main Steward session disconnected during compact.",
+          nextAction: "Read the recovery report and resume the running Worker Agent.",
+          goalIds: [goalId],
+          workerSessionIds: [workerSessionId]
+        }
+      });
+
+      expect(checkpointResponse.statusCode).toBe(200);
+      expect(checkpointResponse.json()).toMatchObject({
+        reason: "crash",
+        summary: "Main Steward session disconnected during compact.",
+        goalIds: [goalId],
+        workerSessionIds: [workerSessionId]
+      });
+
+      const recoveryResponse = await app.inject({ method: "GET", url: "/api/recovery" });
+      const recovery = recoveryResponse.json();
+
+      expect(recoveryResponse.statusCode).toBe(200);
+      expect(recovery.lastCheckpoint).toMatchObject({
+        reason: "crash",
+        nextAction: "Read the recovery report and resume the running Worker Agent."
+      });
+      expect(recovery.activeGoalIds).toEqual([goalId]);
+      expect(recovery.activeGoals[0]).toMatchObject({
+        id: goalId,
+        projectName: "agent-fleet",
+        title: "Recover Steward context",
+        status: "running"
+      });
+      expect(recovery.activeWorkerSessions[0]).toMatchObject({
+        id: workerSessionId,
+        resumeId: "resume-api-test",
+        resumeCommand: "codexyoloproxy resume resume-api-test",
+        worktreeAssignmentId: dashboard.worktreeAssignments[0].id,
+        repositoryPath: "/repo/agent-fleet",
+        worktreeStatus: "planned",
+        worktreePath: `/repo/agent-fleet/.worktrees/${workerSessionId}-recover-steward-context`
+      });
+      expect(recovery.nextActions[0]).toBe("Checkpoint: Read the recovery report and resume the running Worker Agent.");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects invalid Steward checkpoint payloads", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const checkpointResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward-checkpoints",
+        payload: {
+          reason: "unexpected",
+          summary: "bad payload",
+          nextAction: "bad payload",
+          goalIds: [],
+          workerSessionIds: []
+        }
+      });
+
+      expect(checkpointResponse.statusCode).toBe(400);
+      expect(checkpointResponse.json()).toMatchObject({
+        error: "Bad Request",
+        message: "reason must be one of: dispatch, correction, recovery, crash, manual"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("rejects invalid Worker session lifecycle status updates", async () => {
     const app = await createApp({
       statePath: join(dir, "state.json"),

@@ -216,4 +216,78 @@ describe("JsonControlPlaneStore", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("persists Steward checkpoints with an audit event", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const goal = await store.createGoal({
+        projectName: "agent-fleet",
+        title: "Recover Steward context",
+        body: "Make the Steward Agent restartable after compact failures."
+      });
+      const decision = await store.recordDecision({
+        goalId: goal.id,
+        workerSessionId: null,
+        title: "Dispatch recovery Worker",
+        rationale: "A Worker Agent can implement durable recovery while the Steward coordinates.",
+        risk: "medium",
+        confidence: 0.82,
+        reversible: true,
+        needsHumanReview: true,
+        status: "active",
+        actions: ["Create durable checkpoint", "Expose recovery report"]
+      });
+      const worker = await store.createWorkerSession({
+        goalId: goal.id,
+        decisionId: decision.id,
+        kind: "codex",
+        command: "codexyoloproxy",
+        cwd: "/worktrees/recovery",
+        pid: 6262,
+        hostId: "local",
+        resumeId: "resume-recovery",
+        status: "running"
+      });
+
+      const checkpoint = await store.recordStewardCheckpoint({
+        reason: "crash",
+        summary: "Main Steward session lost compact stream before completion.",
+        nextAction: "Open the recovery report and resume the running Worker Agent.",
+        goalIds: [goal.id],
+        workerSessionIds: [worker.id]
+      });
+
+      const reopened = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await reopened.dashboard();
+      const event = dashboard.events.at(-1);
+
+      expect(dashboard.stewardCheckpoints[0]).toMatchObject({
+        id: checkpoint.id,
+        reason: "crash",
+        summary: "Main Steward session lost compact stream before completion.",
+        nextAction: "Open the recovery report and resume the running Worker Agent.",
+        goalIds: [goal.id],
+        workerSessionIds: [worker.id]
+      });
+      expect(event).toMatchObject({
+        type: "steward.checkpoint.recorded",
+        goalId: goal.id,
+        decisionId: null,
+        workerSessionId: worker.id,
+        message: "Main Steward session lost compact stream before completion."
+      });
+      expect(JSON.parse(event?.metadataJson ?? "{}")).toEqual({
+        checkpointId: checkpoint.id,
+        reason: "crash",
+        goalIds: [goal.id],
+        workerSessionIds: [worker.id],
+        nextAction: "Open the recovery report and resume the running Worker Agent."
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -1,9 +1,10 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import { join } from "node:path";
-import type { ExecutionNode, WorkerSessionStatus } from "../../shared/types.js";
+import type { ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
+import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
 import { StewardRuntime } from "../steward/stewardRuntime.js";
 import { createNodeWorktreeRunner } from "../worktrees/nodeWorktreeRunner.js";
 import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js";
@@ -57,6 +58,18 @@ function optionalLastOutput(value: unknown): string | undefined {
   return value;
 }
 
+function stringArray(value: unknown, name: string): string[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`${name} must be an array of strings`);
+  }
+
+  return value.map((item, index) => requireString(item, `${name}[${index}]`));
+}
+
 function requireWorkerSessionStatus(value: unknown): WorkerSessionStatus {
   if (
     value === "starting" ||
@@ -69,6 +82,20 @@ function requireWorkerSessionStatus(value: unknown): WorkerSessionStatus {
   }
 
   throw new Error("status must be one of: starting, running, paused, completed, failed");
+}
+
+function requireStewardCheckpointReason(value: unknown): StewardCheckpointReason {
+  if (
+    value === "dispatch" ||
+    value === "correction" ||
+    value === "recovery" ||
+    value === "crash" ||
+    value === "manual"
+  ) {
+    return value;
+  }
+
+  throw new Error("reason must be one of: dispatch, correction, recovery, crash, manual");
 }
 
 function requireExecutionNodeKind(value: unknown): ExecutionNode["kind"] {
@@ -148,6 +175,8 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   app.get("/api/dashboard", async () => store.dashboard());
 
+  app.get("/api/recovery", async () => buildStewardRecoveryReport(await store.dashboard()));
+
   app.post("/api/goals", async (request) => {
     const body = requestBody(request.body);
 
@@ -183,6 +212,33 @@ export async function createApp(options: CreateAppOptions = {}) {
     } catch (error) {
       if (error instanceof Error) {
         const statusCode = error.message.startsWith("Worker session not found:") ? 404 : 400;
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/steward-checkpoints", async (request, reply) => {
+    const body = requestBody(request.body);
+
+    try {
+      return await store.recordStewardCheckpoint({
+        reason: requireStewardCheckpointReason(body.reason),
+        summary: requireString(body.summary, "summary"),
+        nextAction: requireString(body.nextAction, "nextAction"),
+        goalIds: stringArray(body.goalIds, "goalIds"),
+        workerSessionIds: stringArray(body.workerSessionIds, "workerSessionIds")
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        const statusCode =
+          error.message.startsWith("Goal not found:") || error.message.startsWith("Worker session not found:")
+            ? 404
+            : 400;
         return reply.code(statusCode).send({
           error: statusCode === 404 ? "Not Found" : "Bad Request",
           message: error.message

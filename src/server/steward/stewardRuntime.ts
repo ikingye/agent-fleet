@@ -8,6 +8,7 @@ import {
   type PlannedWorktree
 } from "../worktrees/worktreeManager.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
+import { buildResumeCommand } from "../workers/resumeCommand.js";
 
 export interface StewardRuntimeOptions {
   store: JsonControlPlaneStore;
@@ -101,7 +102,16 @@ export class StewardRuntime {
 
     await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
 
-    return this.options.store.updateGoalStatus(goal.id, goalStatusForWorkerStatus(workerResult.status));
+    const updatedGoal = await this.options.store.updateGoalStatus(goal.id, goalStatusForWorkerStatus(workerResult.status));
+    await this.options.store.recordStewardCheckpoint({
+      reason: "dispatch",
+      summary: `Worker session ${session.id} recorded for goal: ${goal.title}`,
+      nextAction: buildDispatchNextAction(session.id, session.kind, workerResult.command, workerResult.resumeId),
+      goalIds: [goal.id],
+      workerSessionIds: [session.id]
+    });
+
+    return updatedGoal;
   }
 
   async correctDecision(input: CorrectDecisionInput): Promise<DecisionCorrection> {
@@ -135,6 +145,13 @@ export class StewardRuntime {
         status: "active",
         actions: ["Update memory", "Use the correction in future Worker instructions"]
       });
+      await this.options.store.recordStewardCheckpoint({
+        reason: "correction",
+        summary: "Human correction recorded for Steward decision.",
+        nextAction: "Use the correction in future Worker instructions and recovery summaries.",
+        goalIds: [correctedDecision.goalId],
+        workerSessionIds: correctedDecision.workerSessionId === null ? [] : [correctedDecision.workerSessionId]
+      });
     }
 
     return correction;
@@ -160,4 +177,23 @@ function goalStatusForWorkerStatus(status: "running" | "completed" | "failed") {
   }
 
   return status === "completed" ? "completed" : "blocked";
+}
+
+function buildDispatchNextAction(
+  workerSessionId: string,
+  kind: WorkerAdapter["kind"],
+  command: string,
+  resumeId: string | null
+): string {
+  const resumeCommand = buildResumeCommand({
+    kind,
+    baseCommand: command,
+    resumeId
+  });
+
+  if (resumeCommand === null) {
+    return `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted.`;
+  }
+
+  return `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted.`;
 }

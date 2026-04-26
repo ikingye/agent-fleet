@@ -71,12 +71,19 @@ describe("StewardRuntime", () => {
         branchName: `agent-fleet/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
         status: "planned"
       });
+      expect(dashboard.stewardCheckpoints[0]).toMatchObject({
+        reason: "dispatch",
+        goalIds: [goal.id],
+        workerSessionIds: [dashboard.workerSessions[0].id],
+        nextAction: `Monitor Worker session ${dashboard.workerSessions[0].id}; resume with codexyoloproxy resume resume-bootstrap-agent-fleet if the Steward session is interrupted.`
+      });
       expect(dashboard.events.map((event) => event.type)).toEqual([
         "goal.created",
         "decision.recorded",
         "worker.started",
         "worktree.planned",
-        "goal.updated"
+        "goal.updated",
+        "steward.checkpoint.recorded"
       ]);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -117,6 +124,11 @@ describe("StewardRuntime", () => {
       );
       expect(dashboard.decisions.map((item) => item.title)).toContain("Apply human correction");
       expect(dashboard.events.map((event) => event.type)).toContain("correction.recorded");
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "correction",
+        summary: "Human correction recorded for Steward decision.",
+        nextAction: "Use the correction in future Worker instructions and recovery summaries."
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

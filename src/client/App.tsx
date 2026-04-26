@@ -10,6 +10,7 @@ const emptyDashboard: DashboardData = {
   memories: [],
   executionNodes: [],
   worktreeAssignments: [],
+  stewardCheckpoints: [],
   events: []
 };
 

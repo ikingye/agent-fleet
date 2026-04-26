@@ -12,6 +12,8 @@ import type {
   GoalStatus,
   MemoryEntry,
   MemoryScope,
+  StewardCheckpoint,
+  StewardCheckpointReason,
   StewardDecision,
   WorkerKind,
   WorktreeAssignment,
@@ -68,6 +70,14 @@ export interface CreateWorktreeAssignmentInput {
   branchName: string;
 }
 
+export interface RecordStewardCheckpointInput {
+  reason: StewardCheckpointReason;
+  summary: string;
+  nextAction: string;
+  goalIds: string[];
+  workerSessionIds: string[];
+}
+
 export interface AddCorrectionInput {
   decisionId: string;
   body: string;
@@ -98,6 +108,7 @@ function emptyState(): ControlPlaneState {
     memories: [],
     executionNodes: [],
     worktreeAssignments: [],
+    stewardCheckpoints: [],
     events: []
   };
 }
@@ -114,6 +125,7 @@ function parseState(raw: string): ControlPlaneState {
     memories: parsed.memories ?? [],
     executionNodes: parsed.executionNodes ?? [],
     worktreeAssignments: parsed.worktreeAssignments ?? [],
+    stewardCheckpoints: parsed.stewardCheckpoints ?? [],
     events: parsed.events ?? []
   };
 }
@@ -149,6 +161,7 @@ export class JsonControlPlaneStore {
       memories: [...this.state.memories],
       executionNodes: [...this.state.executionNodes],
       worktreeAssignments: [...this.state.worktreeAssignments],
+      stewardCheckpoints: [...this.state.stewardCheckpoints],
       events: [...this.state.events]
     };
   }
@@ -339,6 +352,44 @@ export class JsonControlPlaneStore {
     await this.save();
 
     return assignment;
+  }
+
+  async recordStewardCheckpoint(input: RecordStewardCheckpointInput): Promise<StewardCheckpoint> {
+    for (const goalId of input.goalIds) {
+      this.findGoal(goalId);
+    }
+    for (const workerSessionId of input.workerSessionIds) {
+      this.findWorkerSession(workerSessionId);
+    }
+
+    const checkpoint: StewardCheckpoint = {
+      id: randomUUID(),
+      reason: input.reason,
+      summary: input.summary,
+      nextAction: input.nextAction,
+      goalIds: [...input.goalIds],
+      workerSessionIds: [...input.workerSessionIds],
+      createdAt: now()
+    };
+
+    this.state.stewardCheckpoints.push(checkpoint);
+    this.addEvent({
+      type: "steward.checkpoint.recorded",
+      goalId: input.goalIds[0] ?? null,
+      decisionId: null,
+      workerSessionId: input.workerSessionIds[0] ?? null,
+      message: checkpoint.summary,
+      metadata: {
+        checkpointId: checkpoint.id,
+        reason: checkpoint.reason,
+        goalIds: checkpoint.goalIds,
+        workerSessionIds: checkpoint.workerSessionIds,
+        nextAction: checkpoint.nextAction
+      }
+    });
+    await this.save();
+
+    return checkpoint;
   }
 
   async addCorrection(input: AddCorrectionInput): Promise<DecisionCorrection> {

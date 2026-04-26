@@ -8,6 +8,7 @@ const emptyDashboard: DashboardData = {
   memories: [],
   executionNodes: [],
   worktreeAssignments: [],
+  stewardCheckpoints: [],
   events: []
 };
 
@@ -38,6 +39,7 @@ export async function fetchDashboard(): Promise<DashboardData> {
     memories: data.memories ?? [],
     executionNodes: data.executionNodes ?? [],
     worktreeAssignments: data.worktreeAssignments ?? [],
+    stewardCheckpoints: data.stewardCheckpoints ?? [],
     events: data.events ?? []
   };
 }

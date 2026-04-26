@@ -22,8 +22,9 @@ This repository currently contains the first local control-plane slice:
 - React dashboard for Steward intake, decisions, Worker sessions, and memory.
 - JSON-backed local state at `.agent-fleet/control-plane.json`.
 - Command Worker adapter that can launch a real executable or a zsh alias such as `codexyoloproxy`.
+- Steward checkpoints and a recovery report API for reconstructing active Worker sessions after a Steward session interruption.
 
-Remote execution, automatic worktree scheduling, resumable long-running supervision, and richer learning memory are roadmap items.
+Automatic Worker resume orchestration and richer learning memory are roadmap items.
 
 ## Quick Start
 

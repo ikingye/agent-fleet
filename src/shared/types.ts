@@ -4,6 +4,7 @@ export type WorkerSessionStatus = "starting" | "running" | "paused" | "completed
 export type DecisionRisk = "low" | "medium" | "high";
 export type DecisionStatus = "active" | "corrected" | "superseded";
 export type MemoryScope = "user" | "project";
+export type StewardCheckpointReason = "dispatch" | "correction" | "recovery" | "crash" | "manual";
 
 export interface Goal {
   id: string;
@@ -88,6 +89,16 @@ export interface WorktreeAssignment {
   updatedAt: string;
 }
 
+export interface StewardCheckpoint {
+  id: string;
+  reason: StewardCheckpointReason;
+  summary: string;
+  nextAction: string;
+  goalIds: string[];
+  workerSessionIds: string[];
+  createdAt: string;
+}
+
 export interface ControlPlaneEvent {
   id: string;
   type: string;
@@ -99,6 +110,35 @@ export interface ControlPlaneEvent {
   createdAt: string;
 }
 
+export interface RecoveryWorkerSession {
+  id: string;
+  goalId: string;
+  decisionId: string;
+  status: WorkerSessionStatus;
+  command: string;
+  cwd: string;
+  pid: number | null;
+  hostId: string | null;
+  resumeId: string | null;
+  resumeCommand: string | null;
+  worktreeAssignmentId: string | null;
+  repositoryPath: string | null;
+  worktreePath: string | null;
+  branchName: string | null;
+  worktreeStatus: WorktreeAssignment["status"] | null;
+  lastOutput: string;
+  updatedAt: string;
+}
+
+export interface StewardRecoveryReport {
+  generatedAt: string;
+  lastCheckpoint: StewardCheckpoint | null;
+  activeGoalIds: string[];
+  activeGoals: Goal[];
+  activeWorkerSessions: RecoveryWorkerSession[];
+  nextActions: string[];
+}
+
 export interface DashboardData {
   goals: Goal[];
   decisions: StewardDecision[];
@@ -107,5 +147,6 @@ export interface DashboardData {
   memories: MemoryEntry[];
   executionNodes: ExecutionNode[];
   worktreeAssignments: WorktreeAssignment[];
+  stewardCheckpoints: StewardCheckpoint[];
   events: ControlPlaneEvent[];
 }

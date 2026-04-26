@@ -30,6 +30,7 @@ function dashboardWith(workerSessions: WorkerSession[]): DashboardData {
     memories: [],
     executionNodes: [],
     worktreeAssignments: [],
+    stewardCheckpoints: [],
     events: []
   };
 }
