@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import type { WorkerKind } from "../../shared/types.js";
-import type { WorkerAdapter, WorkerStartInput, WorkerStartResult } from "./commandWorkerAdapter.js";
+import type { WorkerAdapter, WorkerCompletion, WorkerStartInput, WorkerStartResult } from "./commandWorkerAdapter.js";
 
 export interface BuildSshWorkerCommandInput {
   sshHost: string;
@@ -31,6 +31,7 @@ export interface SshWorkerProcessResult {
   status: WorkerStartResult["status"];
   output: string;
   pid: number | null;
+  completion?: Promise<WorkerCompletion>;
 }
 
 export interface SshWorkerProcessRunner {
@@ -92,7 +93,8 @@ export class RemoteSshWorkerAdapter implements WorkerAdapter {
       resumeId: extractResumeId(processResult.output),
       pid: processResult.pid ?? extractRemotePid(processResult.output),
       status: processResult.status,
-      initialOutput: processResult.output
+      initialOutput: processResult.output,
+      completion: processResult.status === "running" ? processResult.completion : undefined
     };
   }
 }
@@ -106,6 +108,11 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
       });
       let output = "";
       let settled = false;
+      let completionSettled = false;
+      let complete!: (completion: WorkerCompletion) => void;
+      const completion = new Promise<WorkerCompletion>((resolveCompletion) => {
+        complete = resolveCompletion;
+      });
 
       const settle = (status: WorkerStartResult["status"], extraOutput = "") => {
         if (settled) {
@@ -118,7 +125,20 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
         resolve({
           status,
           output: settledOutput,
-          pid: extractRemotePid(settledOutput)
+          pid: extractRemotePid(settledOutput),
+          completion: status === "running" ? completion : undefined
+        });
+      };
+
+      const settleCompletion = (status: WorkerCompletion["status"], extraOutput = "") => {
+        if (completionSettled) {
+          return;
+        }
+
+        completionSettled = true;
+        complete({
+          status,
+          output: `${output}${extraOutput}`
         });
       };
 
@@ -139,7 +159,9 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
         output += chunk.toString("utf8");
       });
       child.on("error", (error) => {
-        settle("failed", `\nSSH worker process failed to start: ${error.message}`);
+        const extraOutput = `\nSSH worker process failed to start: ${error.message}`;
+        settle("failed", extraOutput);
+        settleCompletion("failed", extraOutput);
       });
       child.on("close", (code, signal) => {
         const suffix =
@@ -147,6 +169,7 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
             ? ""
             : `\nSSH worker process exited with ${code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`}`;
         settle(code === 0 ? "completed" : "failed", suffix);
+        settleCompletion(code === 0 ? "completed" : "failed", suffix);
       });
       child.stdin.end(input.stdin);
     });

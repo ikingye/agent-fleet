@@ -11,6 +11,11 @@ import type {
 import { buildGitRefSyncRefs, type GitRefSyncInboundResult } from "../remote/gitRefSync.js";
 import { StewardRuntime } from "./stewardRuntime.js";
 import type { WorkerAdapter, WorkerCompletion } from "../workers/commandWorkerAdapter.js";
+import {
+  RemoteSshWorkerAdapter,
+  type SshWorkerProcessInput,
+  type SshWorkerProcessRunner
+} from "../workers/sshWorkerAdapter.js";
 import type { GithubDeployKeyLease } from "../../shared/types.js";
 
 function deferred<T>() {
@@ -62,6 +67,22 @@ class FakeWorkerAdapter implements WorkerAdapter {
       status: this.status,
       initialOutput: `started with ${input.prompt}`,
       ...(this.completion === undefined || this.status !== "running" ? {} : { completion: this.completion })
+    };
+  }
+}
+
+class DeferredSshRunner implements SshWorkerProcessRunner {
+  readonly inputs: SshWorkerProcessInput[] = [];
+  readonly completion = deferred<WorkerCompletion>();
+
+  async run(input: SshWorkerProcessInput) {
+    this.inputs.push(input);
+
+    return {
+      status: "running" as const,
+      output: "Remote Worker accepted prompt\nagent-fleet remote pid: 6060\n",
+      pid: 6060,
+      completion: this.completion.promise
     };
   }
 }
@@ -1322,6 +1343,96 @@ describe("StewardRuntime", () => {
       });
       expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Owner review required.");
       expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).not.toContain("raw debug line");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ingests a structured final report from remote SSH completion after startup returns running", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const sshRunner = new DeferredSshRunner();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: new FakeWorkerAdapter(),
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: (node) =>
+          new RemoteSshWorkerAdapter({
+            sshHost: node.sshHost ?? "",
+            workerCommand: "codexyoloproxy",
+            runner: sshRunner
+          })
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run long-running high CPU test",
+        body: "Run long-running high CPU tests remotely and report back."
+      });
+      const workerName = sshRunner.inputs[0].stdin.match(/^Worker Name: (.+)$/m)?.[1];
+
+      expect(workerName).toMatch(/^agent-fleet-run-long-running-high-cpu-test-remote-\d{12}$/);
+
+      sshRunner.completion.resolve({
+        status: "completed",
+        output: [
+          "Remote Worker accepted prompt",
+          "agent-fleet remote pid: 6060",
+          `# ${workerName}`,
+          "",
+          "Status: DONE",
+          "Changed files:",
+          "- src/server/workers/sshWorkerAdapter.ts",
+          "Verification:",
+          "- npm test -- src/server/workers/sshWorkerAdapter.test.ts",
+          "Next actions:",
+          "- Review the remote completion ingestion."
+        ].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          (state.workerReports ?? []).length === 1 &&
+          state.workerSessions[0].status === "completed" &&
+          state.stewardCheckpoints.at(-1)?.summary.includes("reported DONE") === true
+      );
+      const session = dashboard.workerSessions[0];
+      const statusUpdates = dashboard.events.filter(
+        (event) => event.type === "worker.status.updated" && event.workerSessionId === session.id
+      );
+
+      expect(session).toMatchObject({
+        hostId: expect.any(String),
+        pid: 6060,
+        status: "completed",
+        lastOutput: expect.stringContaining(`# ${workerName}`)
+      });
+      expect(dashboard.workerReports?.[0]).toMatchObject({
+        goalId: goal.id,
+        workerSessionId: session.id,
+        status: "DONE",
+        changedFiles: ["src/server/workers/sshWorkerAdapter.ts"],
+        verification: ["npm test -- src/server/workers/sshWorkerAdapter.test.ts"],
+        nextActions: ["Review the remote completion ingestion."]
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "recovery",
+        nextAction: expect.stringContaining("Worker report")
+      });
+      expect(statusUpdates).toHaveLength(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

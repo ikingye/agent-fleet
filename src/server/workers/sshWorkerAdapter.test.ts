@@ -274,4 +274,67 @@ describe("ChildProcessSshWorkerRunner", () => {
     expect(result.output).toContain("Remote Worker pid was not reported");
     expect(result.output).toContain("local ssh client pid");
   });
+
+  it("keeps collecting output and resolves completion after startup timeout returns running", async () => {
+    const result = await new ChildProcessSshWorkerRunner().run({
+      command: "sh",
+      args: [
+        "-c",
+        [
+          "printf 'agent-fleet remote pid: 8888\\n';",
+          "sleep 0.15;",
+          "printf 'remote final stdout\\n';",
+          "printf 'remote final stderr\\n' >&2;"
+        ].join(" ")
+      ],
+      stdin: "",
+      startupTimeoutMs: 50
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.pid).toBe(8888);
+    expect(result.completion).toBeDefined();
+    if (result.completion === undefined) {
+      throw new Error("Expected running SSH result to include completion");
+    }
+
+    const completion = await result.completion;
+
+    expect(completion).toMatchObject({ status: "completed" });
+    expect(completion.output).toContain("agent-fleet remote pid: 8888");
+    expect(completion.output).toContain("remote final stdout");
+    expect(completion.output).toContain("remote final stderr");
+  });
+
+  it("resolves long-running completion as failed with accumulated output when ssh exits non-zero", async () => {
+    const result = await new ChildProcessSshWorkerRunner().run({
+      command: "sh",
+      args: [
+        "-c",
+        [
+          "printf 'agent-fleet remote pid: 9999\\n';",
+          "sleep 0.15;",
+          "printf 'remote output before failure\\n';",
+          "printf 'remote failure detail\\n' >&2;",
+          "exit 7;"
+        ].join(" ")
+      ],
+      stdin: "",
+      startupTimeoutMs: 50
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.completion).toBeDefined();
+    if (result.completion === undefined) {
+      throw new Error("Expected running SSH result to include completion");
+    }
+
+    const completion = await result.completion;
+
+    expect(completion).toMatchObject({ status: "failed" });
+    expect(completion.output).toContain("agent-fleet remote pid: 9999");
+    expect(completion.output).toContain("remote output before failure");
+    expect(completion.output).toContain("remote failure detail");
+    expect(completion.output).toContain("SSH worker process exited with code 7");
+  });
 });
