@@ -21,6 +21,7 @@ async function createSession(
     goalStatus?: "queued" | "running" | "blocked" | "completed";
     sessionStatus?: "starting" | "running" | "paused" | "completed" | "failed";
     lastOutput?: string;
+    hostId?: string | null;
   } = {}
 ) {
   const goal = await store.createGoal({
@@ -48,7 +49,7 @@ async function createSession(
     command: "codexyoloproxy",
     cwd: "/projects/agent-fleet",
     pid: 4242,
-    hostId: null,
+    hostId: input.hostId ?? null,
     resumeId: "resume-autonomy",
     status: input.sessionStatus ?? "running",
     lastOutput: input.lastOutput ?? "Worker started"
@@ -82,6 +83,50 @@ describe("runStewardAutonomyTick", () => {
       expect(dashboard.workerSessions).toHaveLength(1);
       expect(dashboard.decisions.map((decision) => decision.title)).toEqual(["Start Worker Agent for goal"]);
       expect(tick.checkpoint.nextAction).toContain("Inspect Worker session");
+    });
+  });
+
+  it("renews active remote deploy-key leases during the autonomy tick", async () => {
+    await withStore(async (store) => {
+      const node = await store.createExecutionNode({
+        name: "lease-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@lease-builder.internal",
+        workRoot: "/tmp/agent-fleet/work",
+        proxyUrl: null
+      });
+      const { session } = await createSession(store, { hostId: node.id });
+      const lease = await store.acquireGithubDeployKeyLease({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        repositoryUrl: "git@github.com:owner/agent-fleet.git",
+        repositorySlug: "owner-agent-fleet",
+        githubDeployKeyId: null,
+        publicKeyFingerprint: "SHA256:project-key",
+        localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+        remoteNodeId: node.id,
+        remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key",
+        workerSessionId: session.id,
+        expiresAt: "2026-04-27T00:05:00.000Z",
+        now: "2026-04-27T00:00:00.000Z"
+      });
+
+      await runStewardAutonomyTick({
+        store,
+        githubDeployKeyLeaseTtlMs: 48 * 60 * 60 * 1000,
+        async probeProcess() {
+          return { status: "running" };
+        }
+      });
+      const renewedLease = (await store.dashboard()).githubDeployKeyLeases.find((item) => item.id === lease.id);
+
+      expect(Date.parse(renewedLease?.expiresAt ?? "")).toBeGreaterThan(Date.parse("2026-04-27T00:05:00.000Z"));
+      expect(renewedLease).toMatchObject({
+        id: lease.id,
+        status: "active",
+        refcount: 1
+      });
     });
   });
 

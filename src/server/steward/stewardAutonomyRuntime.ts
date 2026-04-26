@@ -1,8 +1,10 @@
 import type { StewardCheckpoint, StewardDecision, WorkerReport, WorkerSession } from "../../shared/types.js";
+import type { RemoteGithubDeployKeyProvisioner } from "../remote/remoteKeyProvisioner.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "./recoveryRuntime.js";
 import { buildMemoryContext } from "./memoryContext.js";
 import { reconcileWorkerSessions, type SupervisorReconcileInput } from "./supervisorRuntime.js";
+import { maintainGithubDeployKeyLeases } from "./githubDeployKeyLeaseMaintenance.js";
 
 export interface StewardAutonomyTickResult {
   checked: number;
@@ -20,6 +22,8 @@ export interface StewardAutonomyTickOutput {
 export interface RunStewardAutonomyTickInput {
   store: JsonControlPlaneStore;
   probeProcess: SupervisorReconcileInput["probeProcess"];
+  githubDeployKeyLeaseTtlMs?: number;
+  remoteGithubDeployKeyProvisioner?: Pick<RemoteGithubDeployKeyProvisioner, "cleanupRemoteKey">;
 }
 
 interface QueuedAction {
@@ -45,6 +49,11 @@ export async function runStewardAutonomyTick(input: RunStewardAutonomyTickInput)
     updateGoalStatus(goalId, status) {
       return input.store.updateGoalStatus(goalId, status);
     }
+  });
+  await maintainGithubDeployKeyLeases({
+    store: input.store,
+    leaseTtlMs: input.githubDeployKeyLeaseTtlMs,
+    remoteGithubDeployKeyProvisioner: input.remoteGithubDeployKeyProvisioner
   });
 
   const reconciledDashboard = await input.store.dashboard();
