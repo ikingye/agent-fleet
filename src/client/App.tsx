@@ -9,6 +9,7 @@ const emptyDashboard: DashboardData = {
   corrections: [],
   memories: [],
   executionNodes: [],
+  worktreeAssignments: [],
   events: []
 };
 

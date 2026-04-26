@@ -77,6 +77,17 @@ export interface ExecutionNode {
   updatedAt: string;
 }
 
+export interface WorktreeAssignment {
+  id: string;
+  workerSessionId: string;
+  repositoryPath: string;
+  worktreePath: string;
+  branchName: string;
+  status: "planned" | "active" | "merged" | "abandoned";
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ControlPlaneEvent {
   id: string;
   type: string;
@@ -95,5 +106,6 @@ export interface DashboardData {
   corrections: DecisionCorrection[];
   memories: MemoryEntry[];
   executionNodes: ExecutionNode[];
+  worktreeAssignments: WorktreeAssignment[];
   events: ControlPlaneEvent[];
 }

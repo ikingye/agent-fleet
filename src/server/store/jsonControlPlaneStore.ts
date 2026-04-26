@@ -81,6 +81,7 @@ function emptyState(): ControlPlaneState {
     corrections: [],
     memories: [],
     executionNodes: [],
+    worktreeAssignments: [],
     events: []
   };
 }
@@ -96,6 +97,7 @@ function parseState(raw: string): ControlPlaneState {
     corrections: parsed.corrections ?? [],
     memories: parsed.memories ?? [],
     executionNodes: parsed.executionNodes ?? [],
+    worktreeAssignments: parsed.worktreeAssignments ?? [],
     events: parsed.events ?? []
   };
 }
@@ -130,6 +132,7 @@ export class JsonControlPlaneStore {
       corrections: [...this.state.corrections],
       memories: [...this.state.memories],
       executionNodes: [...this.state.executionNodes],
+      worktreeAssignments: [...this.state.worktreeAssignments],
       events: [...this.state.events]
     };
   }

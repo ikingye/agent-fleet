@@ -7,6 +7,7 @@ const emptyDashboard: DashboardData = {
   corrections: [],
   memories: [],
   executionNodes: [],
+  worktreeAssignments: [],
   events: []
 };
 
@@ -34,6 +35,7 @@ export async function fetchDashboard(): Promise<DashboardData> {
     corrections: data.corrections ?? [],
     memories: data.memories ?? [],
     executionNodes: data.executionNodes ?? [],
+    worktreeAssignments: data.worktreeAssignments ?? [],
     events: data.events ?? []
   };
 }
