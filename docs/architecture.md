@@ -4,7 +4,7 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 
 ## Components
 
-- `src/client`: React dashboard for Steward Chat, Steward Intake, goals, decisions, corrections, Worker sessions, remote nodes, worktrees, events, and memory.
+- `src/client`: React dashboard for Steward Chat, Steward Intake, goals, Steward decision review, corrections, secondary Worker session audit details, remote nodes, worktrees, events, and memory.
 - `src/server/http`: Fastify app, route validation, and API composition.
 - `src/server/steward`: orchestration behavior that turns human goals into decisions and Worker instructions.
 - `src/server/store`: durable state for goals, decisions, Worker sessions, corrections, memories, execution nodes, worktree assignments, Steward Chat messages, checkpoints, and events.
@@ -25,6 +25,10 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 The owner should interact with the Steward, not directly manage many Worker terminals. Worker prompts tell downstream agents to treat Steward instructions as the human owner's instructions.
 
 For new owner instructions, the Steward should usually create a named Worker task or send the instruction as an update to an existing relevant Worker. Every Worker task has an explicit Worker Name in the format `<project-name>-<worker-purpose>-YYYYMMDDHHmm`, such as `agent-fleet-compact-dashboard-ui-202604261652` or `mahjong-project-readiness-202604261652`. Do not include `T`, seconds, or timezone in the Worker Name. The Steward puts that name at the top of the Worker prompt and requires the Worker to use the exact name as the heading of its final report. If the underlying spawn system assigns a random nickname, that nickname is secondary; the explicit Worker Name is the source of truth. The Steward's own working context should stay compact: goals, decisions, active Worker ownership, blockers, and verification results are coordinator state; code reading, implementation, review, and testing should be delegated to Workers where practical. Completing one Worker task is not a stopping condition by itself; the Steward should continue to the next Worker or verification step unless blocked.
+
+The browser should present Steward-level decisions as the primary owner-facing review surface. A decision should show what the Steward chose, the risk and confidence behind it, whether it is reversible, and whether it needs a double-check. Worker messages, raw stdout/stderr, command lines, resume mechanics, and detailed adapter protocol output remain durable audit/debug data, but they should be collapsed or secondary by default. Worker details become prominent only when they require owner action, such as a blocker, high-impact risk, failed verification, or ambiguous instruction.
+
+Corrections should attach to Steward decisions and memory rather than low-level Worker chatter. When a Worker transcript reveals a needed correction, the product should translate that into a Steward decision correction or learned preference so future orchestration improves.
 
 ## State Model
 
@@ -52,5 +56,6 @@ Worktree materialization performs the side effects behind an injected runner. `m
 - Worker adapters should not own product decision logic.
 - Remote helpers should stay pure unless they are explicit adapters; SSH and network probes belong behind adapter boundaries.
 - Steward logic should record decisions before launching irreversible or externally visible work.
-- Project-specific implementation and business UI belong in the target `workspacePath`; the browser dashboard stays a compact control-plane surface for management, status, review, correction, and recovery.
+- Project-specific implementation and business UI belong in the target `workspacePath`; the browser dashboard stays a compact control-plane surface for management, status, Steward decision review, correction, and recovery.
+- Worker communication details should remain inspectable for audit and debugging, but collapsed or secondary in owner-facing flows unless they need owner action.
 - Shared types should remain serializable and browser-safe.

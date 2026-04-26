@@ -48,12 +48,12 @@ Use Steward Chat as the owner's primary interaction surface. Chat messages are p
 Use the dashboard to inspect:
 
 - Goals and status.
-- Steward decisions.
-- Worker command, pid, resume id, status, and initial output.
+- Steward decisions, including risks, confidence, reversibility, and required double-checks.
+- Worker command, pid, resume id, status, stdout/stderr, and initial output as secondary audit/debug details.
 - Human corrections and learned memory.
 - Remote nodes, planned worktrees, audit events, and Steward Chat history.
 
-The dashboard is for compact management and review. Do not add business project UI or product-specific implementation to agent-fleet; keep that code in the target workspace.
+The dashboard is for compact management and review. The Steward is the owner-facing interface; Worker Agents are implementation detail unless something needs owner action. Corrections should target Steward decisions and memory rather than low-level Worker chatter. Do not add business project UI or product-specific implementation to agent-fleet; keep that code in the target workspace.
 
 ## 5. Recover After Restart
 

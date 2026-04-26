@@ -59,6 +59,15 @@ function isVisibleWorkerSession(session: WorkerSession): boolean {
   return session.status === "starting" || session.status === "running" || session.status === "paused";
 }
 
+function isKeyDecision(decision: StewardDecision): boolean {
+  return (
+    decision.needsHumanReview ||
+    decision.risk === "high" ||
+    decision.status === "corrected" ||
+    (decision.status === "active" && decision.risk !== "low")
+  );
+}
+
 export function App() {
   const [dashboard, setDashboard] = useState<ClientDashboardData>(emptyDashboard);
   const [projectName, setProjectName] = useState("");
@@ -74,9 +83,15 @@ export function App() {
   const [nodeCapacity, setNodeCapacity] = useState("1");
   const [nodeStatus, setNodeStatus] = useState<ExecutionNode["status"]>("unknown");
   const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, string>>({});
+  const [showWorkerMessages, setShowWorkerMessages] = useState(false);
+  const [showWorkerDebug, setShowWorkerDebug] = useState(false);
+  const [showWorkerHistory, setShowWorkerHistory] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const activeDecisions = useMemo(
-    () => dashboard.decisions.filter((decision) => decision.status === "active" || decision.needsHumanReview),
+  const keyDecisions = useMemo(
+    () =>
+      dashboard.decisions
+        .filter((decision) => isKeyDecision(decision))
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
     [dashboard.decisions]
   );
   const humanReviewCount = useMemo(
@@ -99,6 +114,14 @@ export function App() {
         .filter((session) => !isVisibleWorkerSession(session))
         .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
     [dashboard.workerSessions]
+  );
+  const ownerFacingMessages = useMemo(
+    () => dashboard.stewardMessages.filter((message) => message.role !== "worker"),
+    [dashboard.stewardMessages]
+  );
+  const workerMessages = useMemo(
+    () => dashboard.stewardMessages.filter((message) => message.role === "worker"),
+    [dashboard.stewardMessages]
   );
   const memoryCount = dashboard.memories.length;
   const goalCount = dashboard.goals.length;
@@ -306,10 +329,10 @@ export function App() {
             <h2>Steward Chat</h2>
           </div>
           <div className="chat-log" aria-label="Steward messages">
-            {dashboard.stewardMessages.length === 0 ? (
+            {ownerFacingMessages.length === 0 ? (
               <p className="empty-copy">No Steward conversation recorded.</p>
             ) : (
-              dashboard.stewardMessages.map((message) => (
+              ownerFacingMessages.map((message) => (
                 <article className={`message-row message-${message.role}`} key={message.id}>
                   <div className="message-meta">
                     <span>{message.role}</span>
@@ -321,6 +344,32 @@ export function App() {
                 </article>
               ))
             )}
+            {workerMessages.length > 0 ? (
+              <div className="worker-message-disclosure">
+                <button
+                  className="link-button"
+                  onClick={() => setShowWorkerMessages((current) => !current)}
+                  type="button"
+                >
+                  {workerMessages.length} Worker {workerMessages.length === 1 ? "message" : "messages"} hidden
+                </button>
+                {showWorkerMessages ? (
+                  <div className="worker-message-audit" aria-label="Worker chat audit">
+                    {workerMessages.map((message) => (
+                      <article className={`message-row message-${message.role}`} key={message.id}>
+                        <div className="message-meta">
+                          <span>{message.role}</span>
+                          {message.projectName ? <span>{message.projectName}</span> : null}
+                          {message.workspacePath ? <code>{displayPath(message.workspacePath)}</code> : null}
+                          <time dateTime={message.createdAt}>{formatEventTime(message.createdAt)}</time>
+                        </div>
+                        <p>{message.body}</p>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <form className="stack-form chat-form" onSubmit={(event) => void submitStewardMessage(event)}>
             <textarea
@@ -365,14 +414,14 @@ export function App() {
 
         <section className="panel decision-panel">
           <div className="panel-heading">
-            <p className="eyebrow">Autonomy Audit</p>
-            <h2>Decisions Needing Review</h2>
+            <p className="eyebrow">Owner Review</p>
+            <h2>Key Decisions</h2>
           </div>
           <div className="item-list scroll-list decision-list">
-            {activeDecisions.length === 0 ? (
+            {keyDecisions.length === 0 ? (
               <p className="empty-copy">No Steward decisions recorded.</p>
             ) : (
-              activeDecisions.map((decision) => (
+              keyDecisions.map((decision) => (
                 <article className="decision-row" key={decision.id}>
                   <div className="decision-head">
                     <div>
@@ -382,6 +431,9 @@ export function App() {
                     <div className="badge-cluster">
                       <span className={`pill risk-${decision.risk}`}>{decision.risk}</span>
                       {decision.needsHumanReview ? <span className="pill review-pill">needs review</span> : null}
+                      {decision.needsHumanReview || decision.risk === "high" ? (
+                        <span className="pill double-check-pill">owner double-check</span>
+                      ) : null}
                     </div>
                   </div>
                   <dl className="decision-metrics inline-facts">
@@ -422,53 +474,130 @@ export function App() {
 
         <section aria-labelledby="worker-sessions-heading" className="panel worker-panel">
           <div className="panel-heading">
-            <p className="eyebrow">Execution</p>
-            <h2 id="worker-sessions-heading">Worker Sessions</h2>
+            <p className="eyebrow">Operations</p>
+            <h2 id="worker-sessions-heading">Worker Operations</h2>
           </div>
           <div className="item-list scroll-list compact-list">
             {dashboard.workerSessions.length === 0 ? (
               <p className="empty-copy">No Worker Agent sessions yet.</p>
             ) : (
               <>
+                <div className="worker-ops-summary">
+                  <span>{runningWorkerCount} running</span>
+                  <span>{visibleWorkerSessions.length} active</span>
+                  <span>{workerCount} total</span>
+                </div>
                 {visibleWorkerSessions.length === 0 ? <p className="empty-copy">No active Worker Agent sessions.</p> : null}
                 {visibleWorkerSessions.map((session) => (
                   <article className="item-row worker-row compact-row" key={session.id}>
                     <div>
-                      <h3>
-                        {session.kind} <span>{session.command}</span>
-                      </h3>
+                      <h3>{session.kind}</h3>
                       <p>{displayPath(session.cwd)}</p>
-                      <div className="row-meta">
-                        {session.pid ? <span>pid {session.pid}</span> : null}
-                        {session.resumeId ? <span>resume {session.resumeId}</span> : null}
-                      </div>
-                      {session.resumeId ? <code className="copy-command">{resumeCommand(session.command, session.resumeId)}</code> : null}
                     </div>
                     <span className={`pill status-${session.status}`}>{session.status}</span>
                   </article>
                 ))}
+                {visibleWorkerSessions.length > 0 ? (
+                  <section className="worker-history">
+                    <button
+                      aria-expanded={showWorkerDebug}
+                      className="worker-disclosure-button"
+                      onClick={() => setShowWorkerDebug((current) => !current)}
+                      type="button"
+                    >
+                      <span>Debug details</span>
+                      <strong>{visibleWorkerSessions.length} active sessions</strong>
+                    </button>
+                    {showWorkerDebug ? (
+                      <div aria-label="Worker debug details" className="worker-history-list" role="group">
+                        {visibleWorkerSessions.map((session) => (
+                          <article className="worker-history-row" key={session.id}>
+                            <div className="worker-history-main">
+                              <h3>{session.kind} session</h3>
+                              <dl className="debug-facts">
+                                <div>
+                                  <dt>command</dt>
+                                  <dd>{session.command}</dd>
+                                </div>
+                                <div>
+                                  <dt>cwd</dt>
+                                  <dd>{displayPath(session.cwd)}</dd>
+                                </div>
+                                {session.pid ? (
+                                  <div>
+                                    <dt>pid</dt>
+                                    <dd>pid {session.pid}</dd>
+                                  </div>
+                                ) : null}
+                                {session.resumeId ? (
+                                  <div>
+                                    <dt>resume</dt>
+                                    <dd>{resumeCommand(session.command, session.resumeId)}</dd>
+                                  </div>
+                                ) : null}
+                              </dl>
+                              {session.lastOutput ? <pre>{session.lastOutput}</pre> : null}
+                            </div>
+                            <div className="worker-history-meta">
+                              <span className={`pill status-${session.status}`}>{session.status}</span>
+                              {session.resumeId ? <span>resume {session.resumeId}</span> : null}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
                 {historicalWorkerSessions.length > 0 ? (
-                  <details aria-label="Historical Worker sessions" className="worker-history">
-                    <summary>
+                  <section className="worker-history">
+                    <button
+                      aria-expanded={showWorkerHistory}
+                      className="worker-disclosure-button"
+                      onClick={() => setShowWorkerHistory((current) => !current)}
+                      type="button"
+                    >
                       <span>History</span>
                       <strong>{historicalWorkerSessions.length} historical sessions</strong>
-                    </summary>
-                    <div className="worker-history-list">
-                      {historicalWorkerSessions.map((session) => (
-                        <article className="worker-history-row" key={session.id}>
-                          <div className="worker-history-main">
-                            <h3>{session.kind}</h3>
-                            <p>{displayPath(session.cwd)}</p>
-                            {session.lastOutput ? <pre>{session.lastOutput}</pre> : null}
-                          </div>
-                          <div className="worker-history-meta">
-                            <span className={`pill status-${session.status}`}>{session.status}</span>
-                            {session.resumeId ? <span>resume {session.resumeId}</span> : null}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  </details>
+                    </button>
+                    {showWorkerHistory ? (
+                      <div aria-label="Historical Worker sessions" className="worker-history-list" role="group">
+                        {historicalWorkerSessions.map((session) => (
+                          <article className="worker-history-row" key={session.id}>
+                            <div className="worker-history-main">
+                              <h3>{session.kind} session</h3>
+                              <dl className="debug-facts">
+                                <div>
+                                  <dt>command</dt>
+                                  <dd>{session.command}</dd>
+                                </div>
+                                <div>
+                                  <dt>cwd</dt>
+                                  <dd>{displayPath(session.cwd)}</dd>
+                                </div>
+                                {session.pid ? (
+                                  <div>
+                                    <dt>pid</dt>
+                                    <dd>pid {session.pid}</dd>
+                                  </div>
+                                ) : null}
+                                {session.resumeId ? (
+                                  <div>
+                                    <dt>resume</dt>
+                                    <dd>{resumeCommand(session.command, session.resumeId)}</dd>
+                                  </div>
+                                ) : null}
+                              </dl>
+                              {session.lastOutput ? <pre>{session.lastOutput}</pre> : null}
+                            </div>
+                            <div className="worker-history-meta">
+                              <span className={`pill status-${session.status}`}>{session.status}</span>
+                              {session.resumeId ? <span>resume {session.resumeId}</span> : null}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    ) : null}
+                  </section>
                 ) : null}
               </>
             )}

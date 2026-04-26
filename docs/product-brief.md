@@ -24,6 +24,7 @@ The long-term goal is a Steward Agent that keeps learning the human's preference
 
 - One human-facing agent: the Steward Agent is the only required human interaction surface.
 - Workers treat the Steward as the human: Codex, Claude, Gemini, and future adapters receive instructions from the Steward and report back to it.
+- Owner-facing decision review: the owner primarily reviews Steward decisions, risks, confidence, reversibility, and required double-checks. Raw Worker messages, stdout/stderr, command lines, resume mechanics, and detailed protocol output are audit/debug information and should be collapsed or secondary by default.
 - Delegate execution: when the owner gives a new instruction, the Steward should usually assign a clearly named Worker task or update an existing relevant Worker instead of carrying all implementation context itself.
 - Compact Steward context: the Steward retains goals, decisions, active Worker ownership, blockers, and verification results while Workers handle code reading, implementation, review, and testing where practical.
 - Clear Worker identity: every Worker task has a human-readable Worker Name in the format `<project-name>-<worker-purpose>-YYYYMMDDHHmm`, such as `agent-fleet-compact-dashboard-ui-202604261652` or `mahjong-project-readiness-202604261652`. Do not include `T`, seconds, or timezone in the Worker Name. The Steward puts that name at the top of the Worker prompt and requires the Worker to use the exact name as the heading of its final report. Random spawn-system nicknames are secondary; the explicit Worker Name is the source of truth.
@@ -33,6 +34,7 @@ The long-term goal is a Steward Agent that keeps learning the human's preference
 - Durable Steward Chat: owner and Steward messages are persisted as `stewardMessages` in `.agent-fleet/control-plane.json`.
 - Autonomy with accountability: the Steward may decide and continue, but must log important decisions and expose them for review.
 - Human correction is normal: decisions must be correctable after work has continued.
+- Correct the Steward, not Worker chatter: corrections should update Steward decisions, preferences, and memory. Worker communication details should only become owner-facing when they reveal a blocker, risk, or required owner action.
 - Multi-project visibility: status, corrections, important decisions, Worker sessions, checkpoints, and memory should be easy to review across projects.
 - Parallelism by default: use worktrees, clear ownership, and independent task scopes to increase throughput.
 - Local-first control, remote-capable execution: the developer controls the system locally while expensive work can move elsewhere.

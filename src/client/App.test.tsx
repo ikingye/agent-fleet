@@ -45,7 +45,7 @@ const dashboard = {
       hostId: null,
       resumeId: "resume-1",
       status: "running",
-      lastOutput: "started",
+      lastOutput: "raw worker stdout should stay hidden by default",
       createdAt: "2026-04-26T00:00:00.000Z",
       updatedAt: "2026-04-26T00:00:00.000Z"
     }
@@ -68,6 +68,15 @@ const dashboard = {
       goalId: "goal-1",
       body: "I will record the decision trail before dispatching work.",
       createdAt: "2026-04-26T00:00:40.000Z"
+    },
+    {
+      id: "message-3",
+      role: "worker",
+      projectName: "agent-fleet",
+      workspacePath: "/Users/yewang/code/project/agent-fleet",
+      goalId: "goal-1",
+      body: "WORKER_PROTOCOL: spawned process details and tool chatter",
+      createdAt: "2026-04-26T00:00:50.000Z"
     }
   ],
   corrections: [],
@@ -147,17 +156,39 @@ describe("App", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Steward Intake" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Goals" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Decisions Needing Review" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Worker Sessions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Key Decisions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Worker Operations" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Recovery / Audit" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Memory" })).toBeInTheDocument();
     expect(screen.getByText("Start Worker Agent for goal")).toBeInTheDocument();
     expect(screen.getByText("needs review")).toBeInTheDocument();
-    expect(screen.getByText("codexyoloproxy")).toBeInTheDocument();
-    expect(screen.getByText("pid 4242")).toBeInTheDocument();
-    expect(screen.getByText("codexyoloproxy resume resume-1")).toBeInTheDocument();
+    expect(screen.getByText("owner double-check")).toBeInTheDocument();
+    expect(screen.getByText("1 running")).toBeInTheDocument();
+    expect(screen.queryByText("codexyoloproxy")).not.toBeInTheDocument();
+    expect(screen.queryByText("pid 4242")).not.toBeInTheDocument();
+    expect(screen.queryByText("codexyoloproxy resume resume-1")).not.toBeInTheDocument();
+    expect(screen.queryByText("raw worker stdout should stay hidden by default")).not.toBeInTheDocument();
+    expect(screen.queryByText("WORKER_PROTOCOL: spawned process details and tool chatter")).not.toBeInTheDocument();
+    expect(screen.getByText("1 Worker message hidden")).toBeInTheDocument();
     expect(screen.queryByText(/Mahjong Arena/i)).not.toBeInTheDocument();
+  });
+
+  it("shows Worker session debug details only after expanding operations", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
+    expect(within(workerPanel).getByText("1 running")).toBeInTheDocument();
+    expect(within(workerPanel).queryByText("codexyoloproxy")).not.toBeInTheDocument();
+    expect(within(workerPanel).queryByText("raw worker stdout should stay hidden by default")).not.toBeInTheDocument();
+
+    await user.click(within(workerPanel).getByText("Debug details"));
+
+    expect(within(workerPanel).getByText("codexyoloproxy")).toBeInTheDocument();
+    expect(within(workerPanel).getByText("pid 4242")).toBeInTheDocument();
+    expect(within(workerPanel).getByText("codexyoloproxy resume resume-1")).toBeInTheDocument();
+    expect(within(workerPanel).getByText("raw worker stdout should stay hidden by default")).toBeInTheDocument();
   });
 
   it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
@@ -336,12 +367,12 @@ describe("App", () => {
 
     render(<App />);
 
-    const workerPanel = await screen.findByRole("region", { name: "Worker Sessions" });
+    const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
     expect(within(workerPanel).getByText("/worktrees/active")).toBeInTheDocument();
     expect(within(workerPanel).getByText("/worktrees/paused")).toBeInTheDocument();
-    expect(within(workerPanel).getByText("/worktrees/failed-oldest")).not.toBeVisible();
+    expect(within(workerPanel).queryByText("/worktrees/failed-oldest")).not.toBeInTheDocument();
     expect(within(workerPanel).getByText("3 historical sessions")).toBeInTheDocument();
-    expect(within(workerPanel).getByText("stack trace from oldest failure")).not.toBeVisible();
+    expect(within(workerPanel).queryByText("stack trace from oldest failure")).not.toBeInTheDocument();
   });
 
   it("shows collapsed Worker history output when expanded without tall failed cards", async () => {
@@ -385,7 +416,7 @@ describe("App", () => {
 
     render(<App />);
 
-    const workerPanel = await screen.findByRole("region", { name: "Worker Sessions" });
+    const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
     await user.click(within(workerPanel).getByText("History"));
 
     const history = within(workerPanel).getByRole("group", { name: "Historical Worker sessions" });
@@ -520,6 +551,7 @@ describe("App", () => {
     expect(await screen.findByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
     expect(screen.getByText("Please keep Worker execution durable.")).toBeInTheDocument();
     expect(screen.getByText("I will record the decision trail before dispatching work.")).toBeInTheDocument();
+    expect(screen.queryByText("WORKER_PROTOCOL: spawned process details and tool chatter")).not.toBeInTheDocument();
 
     await user.type(screen.getByLabelText("Project"), "mahjong");
     await user.type(screen.getByLabelText("Target directory"), "/Users/yewang/code/project/mahjong");

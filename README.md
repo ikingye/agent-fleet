@@ -13,6 +13,7 @@ agent-fleet removes the human bottleneck from multi-agent development:
 - One Steward Agent becomes the only human-facing interface.
 - Worker Agents such as Codex or Claude receive explicit Worker Names from the Steward, such as `agent-fleet-compact-dashboard-ui-202604261652`, and report back under that same heading. Random spawn nicknames remain secondary.
 - Conversation history, goals, decisions, corrections, checkpoints, resume ids, process ids, Worker sessions, and project memory become durable state.
+- Owner-facing review centers on Steward decisions, risks, confidence, reversibility, and required double-checks; raw Worker messages, stdout/stderr, command lines, resume mechanics, and protocol output are secondary audit/debug details.
 - Every project goal has an explicit target `workspacePath`, for example `~/code/project/mahjong`; Worker cwd/project work happens there unless the owner explicitly asks to work on agent-fleet itself.
 - Parallel work can be coordinated through git worktrees instead of one terminal checkout.
 - Heavy agent work can later move to remote machines while the local Mac remains usable.
@@ -22,7 +23,7 @@ agent-fleet removes the human bottleneck from multi-agent development:
 This repository currently contains the first local control-plane slice:
 
 - Fastify API for goals, dashboard state, and decision corrections.
-- React dashboard for Steward Chat, Steward Intake with Target directory, decisions, corrections, Worker sessions, remote nodes, worktrees, events, and memory.
+- React dashboard for Steward Chat, Steward Intake with Target directory, Steward decision review, corrections, Worker session audit details, remote nodes, worktrees, events, and memory.
 - JSON-backed local state at `.agent-fleet/control-plane.json`, including durable `stewardMessages` for Steward Chat.
 - Command Worker adapter that can launch a real executable or a zsh alias such as `codexyoloproxy`; noninteractive executable configuration is preferred for API-launched Workers when available.
 - Steward checkpoints and `GET /api/recovery` for reconstructing active goals, Worker sessions, resume commands, worktree metadata, and next actions after terminal disconnects or restarts.
