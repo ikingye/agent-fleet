@@ -280,6 +280,14 @@ h3 {
   min-height: 74px;
 }
 
+.field-hint {
+  margin: -3px 0 0;
+  color: #61716c;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
 .chat-form {
   border-top: 1px solid #e3e9e6;
   border-bottom: 0;
@@ -482,6 +490,70 @@ h3 {
   font-size: 12px;
   font-weight: 800;
   overflow-wrap: anywhere;
+}
+
+.decision-resource {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #d4dcd8;
+  border-radius: 7px;
+  padding: 7px 8px;
+  background: #f7faf8;
+}
+
+.decision-resource-head {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.decision-resource-head span:first-child {
+  color: #61716c;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.decision-resource-head strong {
+  color: #182126;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.decision-resource-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+
+.decision-resource-facts div {
+  min-width: 0;
+  border: 1px solid #e3e9e6;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: #ffffff;
+}
+
+.decision-resource-facts dt,
+.decision-resource-facts dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.decision-resource-facts dt {
+  color: #61716c;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.decision-resource-facts dd {
+  color: #384843;
+  font-weight: 800;
 }
 
 .action-list {

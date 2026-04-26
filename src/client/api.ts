@@ -6,7 +6,14 @@ export interface ClientGoal extends Goal {
   workspacePath?: string;
 }
 
-export interface ClientDashboardData extends Omit<DashboardData, "goals"> {
+export interface ClientExecutionNode extends ExecutionNode {
+  lastHighLevelNote?: string | null;
+  lastNote?: string | null;
+  note?: string | null;
+}
+
+export interface ClientDashboardData extends Omit<DashboardData, "executionNodes" | "goals"> {
+  executionNodes: ClientExecutionNode[];
   goals: ClientGoal[];
   stewardMessages: StewardMessage[];
 }
