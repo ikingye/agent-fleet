@@ -42,7 +42,7 @@ const dashboard = {
       command: "codexyoloproxy",
       cwd: "/worktrees/agent-fleet",
       pid: 4242,
-      hostId: null,
+      hostId: "node-1",
       resumeId: "resume-1",
       status: "running",
       lastOutput: "raw worker stdout should stay hidden by default",
@@ -92,6 +92,7 @@ const dashboard = {
       proxyUrl: "https://proxy.agent-fleet.internal",
       tags: ["remote", "linux", "high-cpu"],
       capacity: 2,
+      lastNote: "ready for remote verification",
       createdAt: "2026-04-26T00:00:00.000Z",
       updatedAt: "2026-04-26T00:00:00.000Z"
     }
@@ -165,6 +166,13 @@ describe("App", () => {
     expect(screen.getByText("Start Worker Agent for goal")).toBeInTheDocument();
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.getByText("owner double-check")).toBeInTheDocument();
+    const decisionResource = screen.getByRole("group", { name: "Decision resource remote-build-1" });
+    expect(within(decisionResource).getByText("remote-build-1")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("ready")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("2 slots")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("remote, linux, high-cpu")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("ready for remote verification")).toBeInTheDocument();
     expect(screen.getAllByText("1 running").length).toBeGreaterThan(0);
     expect(screen.queryByRole("heading", { level: 2, name: "Worker Operations" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "Recovery Context" })).not.toBeInTheDocument();
@@ -176,6 +184,18 @@ describe("App", () => {
     expect(screen.queryByText("WORKER_PROTOCOL: spawned process details and tool chatter")).not.toBeInTheDocument();
     expect(screen.getByText("1 Worker message hidden")).toBeInTheDocument();
     expect(screen.queryByText(/Mahjong Arena/i)).not.toBeInTheDocument();
+  });
+
+  it("makes external workspace context explicit in Steward intake", async () => {
+    render(<App />);
+
+    const targetDirectory = await screen.findByLabelText("Target directory");
+    expect(targetDirectory).toBeRequired();
+    expect(targetDirectory).toHaveAttribute("placeholder", "~/code/project/target");
+    expect(screen.getByText("External workspace path required")).toBeInTheDocument();
+    expect(screen.getByLabelText("Project")).toBeInTheDocument();
+    expect(screen.getByLabelText("Goal body")).toBeInTheDocument();
+    expect(screen.getByLabelText("Message Steward")).toBeInTheDocument();
   });
 
   it("shows Worker session debug details only after expanding operations", async () => {
@@ -218,10 +238,12 @@ describe("App", () => {
     await user.click(screen.getByRole("tab", { name: "Resources" }));
 
     expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
-    expect(screen.getByText("worker@remote-build-1.internal")).toBeInTheDocument();
-    expect(screen.getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
-    expect(screen.getByText("remote, linux, high-cpu")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
+    const remoteNodesPanel = screen.getByRole("heading", { level: 2, name: "Remote Nodes" }).closest("details");
+    expect(remoteNodesPanel).not.toBeNull();
+    expect(within(remoteNodesPanel as HTMLElement).getByText("worker@remote-build-1.internal")).toBeInTheDocument();
+    expect(within(remoteNodesPanel as HTMLElement).getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
+    expect(within(remoteNodesPanel as HTMLElement).getByText("remote, linux, high-cpu")).toBeInTheDocument();
+    expect(within(remoteNodesPanel as HTMLElement).getByText("2")).toBeInTheDocument();
   });
 
   it("registers a remote execution node and refreshes the dashboard", async () => {

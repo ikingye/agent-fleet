@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import type { ExecutionNode, StewardDecision, WorkerSession } from "../shared/types.js";
 import {
   type ClientDashboardData,
+  type ClientExecutionNode,
   correctDecision,
   createGoal,
   fetchDashboard,
@@ -53,6 +54,15 @@ function resumeCommand(command: string, resumeId: string): string {
 
 function formatEventTime(timestamp: string): string {
   return timestamp.replace("T", " ").replace(/\.\d{3}Z$/, " UTC").replace(/Z$/, " UTC");
+}
+
+function formatCapacity(capacity: number): string {
+  return `${capacity} ${capacity === 1 ? "slot" : "slots"}`;
+}
+
+function executionNodeNote(node: ClientExecutionNode): string | null {
+  const note = node.lastHighLevelNote ?? node.lastNote ?? node.note ?? null;
+  return note === "" ? null : note;
 }
 
 function isVisibleWorkerSession(session: WorkerSession): boolean {
@@ -118,6 +128,14 @@ export function App() {
   const visibleWorkerSessions = useMemo(
     () => dashboard.workerSessions.filter((session) => isVisibleWorkerSession(session)),
     [dashboard.workerSessions]
+  );
+  const workerSessionById = useMemo(
+    () => new Map(dashboard.workerSessions.map((session) => [session.id, session])),
+    [dashboard.workerSessions]
+  );
+  const executionNodeById = useMemo(
+    () => new Map(dashboard.executionNodes.map((node) => [node.id, node])),
+    [dashboard.executionNodes]
   );
   const historicalWorkerSessions = useMemo(
     () =>
@@ -334,12 +352,16 @@ export function App() {
             />
             <input
               aria-label="Target directory"
+              aria-describedby="target-directory-hint"
               onChange={(event) => setWorkspacePath(event.target.value)}
               placeholder="~/code/project/target"
               required
               type="text"
               value={workspacePath}
             />
+            <p className="field-hint" id="target-directory-hint">
+              External workspace path required
+            </p>
             <input
               aria-label="Goal title"
               onChange={(event) => setGoalTitle(event.target.value)}
@@ -455,53 +477,98 @@ export function App() {
             {keyDecisions.length === 0 ? (
               <p className="empty-copy">No Steward decisions recorded.</p>
             ) : (
-              keyDecisions.map((decision) => (
-                <article className="decision-row" key={decision.id}>
-                  <div className="decision-head">
-                    <div>
-                      <h3>{decision.title}</h3>
-                      <p>{decision.rationale}</p>
+              keyDecisions.map((decision) => {
+                const workerSession =
+                  decision.workerSessionId === null ? null : workerSessionById.get(decision.workerSessionId) ?? null;
+                const executionNode =
+                  workerSession?.hostId === null || workerSession?.hostId === undefined
+                    ? null
+                    : executionNodeById.get(workerSession.hostId) ?? null;
+                const nodeNote = executionNode === null ? null : executionNodeNote(executionNode);
+
+                return (
+                  <article className="decision-row" key={decision.id}>
+                    <div className="decision-head">
+                      <div>
+                        <h3>{decision.title}</h3>
+                        <p>{decision.rationale}</p>
+                      </div>
+                      <div className="badge-cluster">
+                        <span className={`pill risk-${decision.risk}`}>{decision.risk}</span>
+                        {decision.needsHumanReview ? <span className="pill review-pill">needs review</span> : null}
+                        {decision.needsHumanReview || decision.risk === "high" ? (
+                          <span className="pill double-check-pill">owner double-check</span>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="badge-cluster">
-                      <span className={`pill risk-${decision.risk}`}>{decision.risk}</span>
-                      {decision.needsHumanReview ? <span className="pill review-pill">needs review</span> : null}
-                      {decision.needsHumanReview || decision.risk === "high" ? (
-                        <span className="pill double-check-pill">owner double-check</span>
-                      ) : null}
+                    <dl className="decision-metrics inline-facts">
+                      <div>
+                        <dt>confidence</dt>
+                        <dd>{Math.round(decision.confidence * 100)}%</dd>
+                      </div>
+                      <div>
+                        <dt>reversible</dt>
+                        <dd>{decision.reversible ? "yes" : "no"}</dd>
+                      </div>
+                      <div>
+                        <dt>status</dt>
+                        <dd>{decision.status}</dd>
+                      </div>
+                    </dl>
+                    {executionNode === null ? null : (
+                      <section
+                        aria-label={`Decision resource ${executionNode.name}`}
+                        className="decision-resource"
+                        role="group"
+                      >
+                        <div className="decision-resource-head">
+                          <span>resource</span>
+                          <strong>{executionNode.name}</strong>
+                          <span className={`pill status-${executionNode.status}`}>{executionNode.status}</span>
+                        </div>
+                        <dl className="decision-resource-facts">
+                          <div>
+                            <dt>capacity</dt>
+                            <dd>{formatCapacity(executionNode.capacity)}</dd>
+                          </div>
+                          <div>
+                            <dt>tags</dt>
+                            <dd>{executionNode.tags.length === 0 ? "none" : executionNode.tags.join(", ")}</dd>
+                          </div>
+                          {executionNode.proxyUrl ? (
+                            <div>
+                              <dt>proxy</dt>
+                              <dd>{executionNode.proxyUrl}</dd>
+                            </div>
+                          ) : null}
+                          {nodeNote ? (
+                            <div>
+                              <dt>note</dt>
+                              <dd>{nodeNote}</dd>
+                            </div>
+                          ) : null}
+                        </dl>
+                      </section>
+                    )}
+                    {actions(decision).length > 0 ? (
+                      <p className="action-summary">{actions(decision).join(" | ")}</p>
+                    ) : null}
+                    <div className="correction-box">
+                      <textarea
+                        aria-label={`Correction for ${decision.title}`}
+                        onChange={(event) =>
+                          setCorrectionDrafts((current) => ({ ...current, [decision.id]: event.target.value }))
+                        }
+                        placeholder="Correct this Steward decision"
+                        value={correctionDrafts[decision.id] ?? ""}
+                      />
+                      <button onClick={() => void submitCorrection(decision.id)} type="button">
+                        Send correction
+                      </button>
                     </div>
-                  </div>
-                  <dl className="decision-metrics inline-facts">
-                    <div>
-                      <dt>confidence</dt>
-                      <dd>{Math.round(decision.confidence * 100)}%</dd>
-                    </div>
-                    <div>
-                      <dt>reversible</dt>
-                      <dd>{decision.reversible ? "yes" : "no"}</dd>
-                    </div>
-                    <div>
-                      <dt>status</dt>
-                      <dd>{decision.status}</dd>
-                    </div>
-                  </dl>
-                  {actions(decision).length > 0 ? (
-                    <p className="action-summary">{actions(decision).join(" | ")}</p>
-                  ) : null}
-                  <div className="correction-box">
-                    <textarea
-                      aria-label={`Correction for ${decision.title}`}
-                      onChange={(event) =>
-                        setCorrectionDrafts((current) => ({ ...current, [decision.id]: event.target.value }))
-                      }
-                      placeholder="Correct this Steward decision"
-                      value={correctionDrafts[decision.id] ?? ""}
-                    />
-                    <button onClick={() => void submitCorrection(decision.id)} type="button">
-                      Send correction
-                    </button>
-                  </div>
-                </article>
-              ))
+                  </article>
+                );
+              })
             )}
           </div>
         </section>
@@ -878,6 +945,12 @@ export function App() {
                         <dt>capacity</dt>
                         <dd>{node.capacity}</dd>
                       </div>
+                      {executionNodeNote(node) ? (
+                        <div>
+                          <dt>note</dt>
+                          <dd>{executionNodeNote(node)}</dd>
+                        </div>
+                      ) : null}
                     </dl>
                   </div>
                   <span className={`pill status-${node.status}`}>{node.status}</span>
