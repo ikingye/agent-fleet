@@ -162,10 +162,17 @@ export function buildSshWorkerCommand(input: BuildSshWorkerCommandInput): BuiltS
   const envPrefix = proxyAssignments.length === 0 ? "" : `env ${proxyAssignments.join(" ")} `;
   const script = [
     `cd ${shellQuote(cwd)} && {`,
-    `${envPrefix}${workerInvocation} &`,
+    "agent_fleet_prompt_file=$(mktemp \"${TMPDIR:-/tmp}/agent-fleet-worker-stdin.XXXXXX\") || exit 1;",
+    'trap \'rm -f "$agent_fleet_prompt_file"\' EXIT HUP INT TERM;',
+    'cat > "$agent_fleet_prompt_file" || exit 1;',
+    `${envPrefix}${workerInvocation} < "$agent_fleet_prompt_file" &`,
     "agent_fleet_worker_pid=$!;",
     `printf '\\n${REMOTE_PID_PREFIX} %s\\n' "$agent_fleet_worker_pid";`,
     'wait "$agent_fleet_worker_pid";',
+    "agent_fleet_worker_status=$?;",
+    'rm -f "$agent_fleet_prompt_file";',
+    "trap - EXIT HUP INT TERM;",
+    'exit "$agent_fleet_worker_status";',
     "}"
   ].join(" ");
   const remoteCommand = `sh -lc ${shellQuote(script)}`;
