@@ -24,15 +24,18 @@ import type {
   StewardDecision,
   StewardMessage,
   StewardMessageRole,
+  WorkerReport,
+  WorkerReportStatus,
   WorkerKind,
   WorktreeAssignment,
   WorkerSession,
   WorkerSessionStatus
 } from "../../shared/types.js";
 
-interface ControlPlaneState extends Omit<DashboardData, "stewardMessages"> {
+interface ControlPlaneState extends Omit<DashboardData, "stewardMessages" | "workerReports"> {
   version: 1;
   stewardMessages: StewardMessage[];
+  workerReports: WorkerReport[];
 }
 
 export interface CreateGoalInput {
@@ -72,6 +75,20 @@ export interface UpdateWorkerSessionStatusInput {
   workerSessionId: string;
   status: WorkerSessionStatus;
   lastOutput?: string;
+}
+
+export interface RecordWorkerReportInput {
+  goalId: string;
+  workerSessionId: string;
+  status: WorkerReportStatus;
+  changedFiles: string[];
+  verification: string[];
+  decisions: string[];
+  blockers: string[];
+  nextActions: string[];
+  needsOwnerReview: boolean;
+  resumeId: string | null;
+  markdown: string;
 }
 
 export interface CreateWorktreeAssignmentInput {
@@ -163,6 +180,7 @@ function emptyState(): ControlPlaneState {
     worktreeAssignments: [],
     stewardCheckpoints: [],
     stewardMessages: [],
+    workerReports: [],
     agentArtifacts: [],
     reviews: [],
     deliveryReports: [],
@@ -184,6 +202,7 @@ function parseState(raw: string): ControlPlaneState {
     worktreeAssignments: parsed.worktreeAssignments ?? [],
     stewardCheckpoints: parsed.stewardCheckpoints ?? [],
     stewardMessages: parsed.stewardMessages ?? [],
+    workerReports: parsed.workerReports ?? [],
     agentArtifacts: parsed.agentArtifacts ?? [],
     reviews: parsed.reviews ?? [],
     deliveryReports: parsed.deliveryReports ?? [],
@@ -279,6 +298,7 @@ export class JsonControlPlaneStore {
       executionNodes: [...this.state.executionNodes],
       worktreeAssignments: [...this.state.worktreeAssignments],
       stewardCheckpoints: [...this.state.stewardCheckpoints],
+      workerReports: [...this.state.workerReports],
       stewardMessages: [...this.state.stewardMessages],
       agentArtifacts: [...this.state.agentArtifacts],
       reviews: [...this.state.reviews],
@@ -453,6 +473,53 @@ export class JsonControlPlaneStore {
     await this.save();
 
     return session;
+  }
+
+  async recordWorkerReport(input: RecordWorkerReportInput): Promise<WorkerReport> {
+    const goal = this.findGoal(input.goalId);
+    const session = this.findWorkerSession(input.workerSessionId);
+
+    if (session.goalId !== goal.id) {
+      throw new Error(`Worker session ${session.id} does not belong to goal ${goal.id}`);
+    }
+
+    const report: WorkerReport = {
+      id: randomUUID(),
+      goalId: goal.id,
+      workerSessionId: session.id,
+      status: input.status,
+      changedFiles: [...input.changedFiles],
+      verification: [...input.verification],
+      decisions: [...input.decisions],
+      blockers: [...input.blockers],
+      nextActions: [...input.nextActions],
+      needsOwnerReview: input.needsOwnerReview,
+      resumeId: input.resumeId,
+      markdown: input.markdown,
+      createdAt: now()
+    };
+
+    this.state.workerReports.push(report);
+    this.addEvent({
+      type: "worker.report.recorded",
+      goalId: report.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: report.workerSessionId,
+      message: `Worker report recorded: ${report.status}`,
+      metadata: {
+        workerReportId: report.id,
+        status: report.status,
+        changedFiles: report.changedFiles,
+        verification: report.verification,
+        blockers: report.blockers,
+        nextActions: report.nextActions,
+        needsOwnerReview: report.needsOwnerReview,
+        resumeId: report.resumeId
+      }
+    });
+    await this.save();
+
+    return report;
   }
 
   async createWorktreeAssignment(input: CreateWorktreeAssignmentInput): Promise<WorktreeAssignment> {

@@ -1,5 +1,5 @@
 import { join, posix } from "node:path";
-import type { Goal, DecisionCorrection, ExecutionNode } from "../../shared/types.js";
+import type { Goal, DecisionCorrection, ExecutionNode, WorkerReport, WorkerReportStatus } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import type { RemoteWorkspaceProvisioner, RemoteWorkspaceProvisionResult } from "../remote/remoteWorkspaceProvisioner.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
@@ -10,6 +10,7 @@ import {
   type PlannedWorktree
 } from "../worktrees/worktreeManager.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
+import { parseWorkerFinalReport } from "../workers/workerReportParser.js";
 import { buildResumeCommand } from "../workers/resumeCommand.js";
 
 export interface StewardRuntimeOptions {
@@ -372,16 +373,34 @@ export class StewardRuntime {
 
     void input.completion
       .then(async (completion) => {
+        const parsedReport = parseWorkerFinalReport(completion.output);
         await this.options.store.updateWorkerSessionStatus({
           workerSessionId: input.workerSessionId,
           status: completion.status,
           lastOutput: completion.output
         });
-        await this.options.store.updateGoalStatus(input.goalId, goalStatusForWorkerStatus(completion.status));
+        const workerReport =
+          parsedReport === null
+            ? null
+            : await this.options.store.recordWorkerReport({
+                goalId: input.goalId,
+                workerSessionId: input.workerSessionId,
+                ...parsedReport
+              });
+        await this.options.store.updateGoalStatus(
+          input.goalId,
+          goalStatusForWorkerOutcome(completion.status, workerReport?.status ?? null)
+        );
         await this.options.store.recordStewardCheckpoint({
           reason: "recovery",
-          summary: `Worker session ${input.workerSessionId} ${completion.status} for goal: ${input.goalTitle}`,
-          nextAction: buildCompletionNextAction(input.workerSessionId, completion.status, completion.output),
+          summary:
+            workerReport === null
+              ? `Worker session ${input.workerSessionId} ${completion.status} for goal: ${input.goalTitle}`
+              : `Worker session ${input.workerSessionId} reported ${workerReport.status} for goal: ${input.goalTitle}`,
+          nextAction:
+            workerReport === null
+              ? buildCompletionNextAction(input.workerSessionId, completion.status, completion.output)
+              : buildReportCompletionNextAction(input.workerSessionId, workerReport),
           goalIds: [input.goalId],
           workerSessionIds: [input.workerSessionId]
         });
@@ -475,6 +494,14 @@ function goalStatusForWorkerStatus(status: "running" | "completed" | "failed") {
   return status === "completed" ? "completed" : "blocked";
 }
 
+function goalStatusForWorkerOutcome(status: "completed" | "failed", reportStatus: WorkerReportStatus | null) {
+  if (status === "failed" || reportStatus === "BLOCKED") {
+    return "blocked";
+  }
+
+  return "completed";
+}
+
 function buildDispatchNextAction(
   workerSessionId: string,
   workerName: string,
@@ -548,4 +575,34 @@ function buildCompletionNextAction(
   return summary === ""
     ? `Review failed Worker session ${workerSessionId} and decide whether to resume, correct, or ask the owner.`
     : `Review failed Worker session ${workerSessionId}: ${summary}`;
+}
+
+function buildReportCompletionNextAction(workerSessionId: string, report: WorkerReport): string {
+  const pieces = [`Worker report ${report.id} for session ${workerSessionId} is ${report.status}.`];
+
+  if (report.nextActions.length > 0) {
+    pieces.push(`Next action: ${report.nextActions.join(" ")}`);
+  } else if (report.status === "BLOCKED") {
+    pieces.push("Decide whether to resume, correct, or ask the owner.");
+  } else {
+    pieces.push("Review the structured Worker report and decide the next owner-facing step.");
+  }
+
+  if (report.blockers.length > 0) {
+    pieces.push(`Blockers: ${report.blockers.join(" ")}`);
+  }
+
+  if (report.verification.length > 0) {
+    pieces.push(`Verification: ${report.verification.join(" ")}`);
+  }
+
+  if (report.needsOwnerReview) {
+    pieces.push("Owner review required.");
+  }
+
+  if (report.resumeId !== null) {
+    pieces.push(`Resume id: ${report.resumeId}.`);
+  }
+
+  return pieces.join(" ");
 }

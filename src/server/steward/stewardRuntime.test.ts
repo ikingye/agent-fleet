@@ -762,6 +762,96 @@ describe("StewardRuntime", () => {
     }
   });
 
+  it("ingests a structured Worker final report from background completion", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-background-report",
+              pid: 4747,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet"
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Ingest Worker report",
+        body: "Parse final Worker output into durable report state."
+      });
+
+      completion.resolve({
+        status: "completed",
+        output: [
+          "raw debug line that should remain in lastOutput only",
+          "# agent-fleet-ingest-worker-report-202604262151",
+          "",
+          "Status: DONE_WITH_CONCERNS",
+          "Changed files:",
+          "- src/server/workers/workerReportParser.ts",
+          "Verification:",
+          "- npm run check passed",
+          "Decisions:",
+          "- Store parsed reports separately from raw stdout.",
+          "Blockers:",
+          "- Human should double-check merge risk.",
+          "Next actions:",
+          "- Review the Worker report before delivery.",
+          "Needs owner review: yes",
+          "Resume id: resume-from-final-report"
+        ].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          (state.workerReports ?? []).length === 1 &&
+          state.workerSessions[0].status === "completed" &&
+          state.stewardCheckpoints.at(-1)?.nextAction.includes("Review the Worker report before delivery.") === true
+      );
+      const workerReports = dashboard.workerReports ?? [];
+
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        status: "completed",
+        lastOutput: expect.stringContaining("raw debug line")
+      });
+      expect(workerReports[0]).toMatchObject({
+        goalId: goal.id,
+        workerSessionId: dashboard.workerSessions[0].id,
+        status: "DONE_WITH_CONCERNS",
+        changedFiles: ["src/server/workers/workerReportParser.ts"],
+        verification: ["npm run check passed"],
+        decisions: ["Store parsed reports separately from raw stdout."],
+        blockers: ["Human should double-check merge risk."],
+        nextActions: ["Review the Worker report before delivery."],
+        needsOwnerReview: true,
+        resumeId: "resume-from-final-report"
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "recovery",
+        nextAction: expect.stringContaining("DONE_WITH_CONCERNS")
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Owner review required.");
+      expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).not.toContain("raw debug line");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("records background Worker failure and blocks the goal", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
     const completion = deferred<{ status: "failed"; output: string }>();

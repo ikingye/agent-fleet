@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DashboardData, StewardCheckpoint, WorkerSession } from "../../shared/types.js";
+import type { DashboardData, StewardCheckpoint, WorkerReport, WorkerSession } from "../../shared/types.js";
 import { buildStewardRecoveryReport } from "./recoveryRuntime.js";
 
 function workerSession(overrides: Partial<WorkerSession>): WorkerSession {
@@ -34,6 +34,25 @@ function checkpoint(overrides: Partial<StewardCheckpoint>): StewardCheckpoint {
   };
 }
 
+function workerReport(overrides: Partial<WorkerReport>): WorkerReport {
+  return {
+    id: "report-1",
+    goalId: "goal-1",
+    workerSessionId: "worker-1",
+    status: "DONE",
+    changedFiles: [],
+    verification: [],
+    decisions: [],
+    blockers: [],
+    nextActions: [],
+    needsOwnerReview: false,
+    resumeId: null,
+    markdown: "Status: DONE",
+    createdAt: "2026-04-26T00:03:00.000Z",
+    ...overrides
+  };
+}
+
 function dashboard(overrides: Partial<DashboardData>): DashboardData {
   return {
     goals: [],
@@ -44,6 +63,7 @@ function dashboard(overrides: Partial<DashboardData>): DashboardData {
     executionNodes: [],
     worktreeAssignments: [],
     stewardCheckpoints: [],
+    workerReports: [],
     stewardMessages: [],
     agentArtifacts: [],
     reviews: [],
@@ -203,5 +223,49 @@ describe("buildStewardRecoveryReport", () => {
     expect(report.nextActions).toEqual([
       "No active Worker sessions. Review queued, running, or blocked goals and decide whether to dispatch a new Worker Agent."
     ]);
+  });
+
+  it("surfaces recent Worker reports and report-driven next actions for recovery", () => {
+    const report = buildStewardRecoveryReport(
+      dashboard({
+        goals: [
+          {
+            id: "goal-blocked",
+            projectName: "agent-fleet",
+            workspacePath: "/projects/agent-fleet",
+            title: "Ingest Worker reports",
+            body: "Keep structured Worker outcomes durable.",
+            status: "blocked",
+            createdAt: "2026-04-26T00:00:00.000Z",
+            updatedAt: "2026-04-26T00:03:00.000Z"
+          }
+        ],
+        workerReports: [
+          workerReport({
+            id: "report-old",
+            goalId: "goal-old",
+            workerSessionId: "worker-old",
+            createdAt: "2026-04-26T00:01:00.000Z"
+          }),
+          workerReport({
+            id: "report-blocked",
+            goalId: "goal-blocked",
+            workerSessionId: "worker-blocked",
+            status: "BLOCKED",
+            blockers: ["Need owner decision before merge."],
+            nextActions: ["Ask the owner to double-check the merge risk."],
+            needsOwnerReview: true,
+            resumeId: "resume-blocked",
+            createdAt: "2026-04-26T00:04:00.000Z"
+          })
+        ]
+      }),
+      "2026-04-26T00:05:00.000Z"
+    );
+
+    expect(report.recentWorkerReports.map((item) => item.id)).toEqual(["report-old", "report-blocked"]);
+    expect(report.nextActions).toContain(
+      "Worker report report-blocked (BLOCKED): Ask the owner to double-check the merge risk. Owner review required."
+    );
   });
 });
