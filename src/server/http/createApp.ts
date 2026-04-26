@@ -253,14 +253,38 @@ export async function createApp(options: CreateAppOptions = {}) {
 
   app.post("/api/recovery/reconcile", async () => {
     const dashboard = await store.dashboard();
+    const supervisedSessions = dashboard.workerSessions.filter(
+      (session) => session.status === "starting" || session.status === "running"
+    );
 
-    return reconcileWorkerSessions({
+    const result = await reconcileWorkerSessions({
       dashboard,
       probeProcess: buildWorkerProcessProbe(dashboard, options),
       updateWorkerSessionStatus(input) {
         return store.updateWorkerSessionStatus(input);
+      },
+      updateGoalStatus(goalId, status) {
+        return store.updateGoalStatus(goalId, status);
       }
     });
+
+    if (result.updated > 0) {
+      const checkedLabel = result.checked === 1 ? "Worker session" : "Worker sessions";
+      await store.recordStewardCheckpoint({
+        reason: "recovery",
+        summary: `Recovery reconcile checked ${result.checked} ${checkedLabel} and updated ${result.updated}.`,
+        nextAction:
+          result.staleSessionIds.length === 0
+            ? "Continue monitoring Worker sessions; related goals were updated for owner recovery."
+            : `Review stale Worker sessions: ${result.staleSessionIds.join(
+                ", "
+              )}. Related goals were updated for owner recovery.`,
+        goalIds: uniqueStrings(supervisedSessions.map((session) => session.goalId)),
+        workerSessionIds: supervisedSessions.map((session) => session.id)
+      });
+    }
+
+    return result;
   });
 
   app.post("/api/steward/autonomy/run", async () => {
@@ -273,6 +297,9 @@ export async function createApp(options: CreateAppOptions = {}) {
       probeProcess: buildWorkerProcessProbe(dashboard, options),
       updateWorkerSessionStatus(input) {
         return store.updateWorkerSessionStatus(input);
+      },
+      updateGoalStatus(goalId, status) {
+        return store.updateGoalStatus(goalId, status);
       }
     });
     const checkedLabel = result.checked === 1 ? "Worker session" : "Worker sessions";
