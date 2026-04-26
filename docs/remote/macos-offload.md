@@ -9,6 +9,28 @@ Remote execution is a planned capability. The goal is to keep the local Mac resp
 - The browser control plane remains local and responsive.
 - Interrupted remote sessions can be resumed without reconstructing terminal state by hand.
 
+## SSH Worker Adapter
+
+`src/server/workers/sshWorkerAdapter.ts` contains the SSH-backed Worker adapter. It launches the local SSH client with an argument array, not a local shell string:
+
+```text
+ssh <host> <quoted-remote-shell-command>
+```
+
+The remote command is a minimal `sh -lc` wrapper that changes to the requested remote `cwd`, applies optional environment variables, and `exec`s the Worker command:
+
+```sh
+cd '<remote cwd>' && exec env HTTPS_PROXY='<proxy url>' codexyoloproxy
+```
+
+Behavior:
+
+- The Steward prompt is forwarded to the SSH process over stdin.
+- The adapter returns the SSH pid, initial output, status, and any resume id printed as `resume id: <value>` or `resume=<value>`.
+- Startup timeout handling matches the local command adapter: if SSH is still running after the timeout, the session is reported as `running` with the output collected so far.
+- If SSH exits nonzero or fails to spawn, the session is reported as `failed` and the SSH output is kept for inspection.
+- Tests use an injectable runner to capture `command`, `args`, and stdin without requiring a real SSH server.
+
 ## Proxy Model
 
 Some remote servers can reach mainland China sites directly but cannot reach Google-style endpoints. Proxy behavior should be domain-aware:
@@ -26,6 +48,17 @@ RemoteForward 127.0.0.1:1080 127.0.0.1:1080
 ```
 
 The remote Worker process can then use the forwarded proxy for domains that require it.
+
+The SSH Worker adapter does not decide which domains need a proxy. The Steward should use the proxy policy to decide whether to provide proxy environment variables for a Worker run. When proxying is required, pass explicit env vars such as:
+
+```text
+HTTPS_PROXY=http://127.0.0.1:1080
+HTTP_PROXY=http://127.0.0.1:1080
+ALL_PROXY=socks5://127.0.0.1:1080
+NO_PROXY=localhost,127.0.0.1
+```
+
+For direct mainland access, omit these proxy env vars. This keeps direct-capable traffic off the forwarded proxy while still allowing Worker commands to reach global services when the remote host needs the Mac's local proxy.
 
 ## Registering Execution Nodes
 
