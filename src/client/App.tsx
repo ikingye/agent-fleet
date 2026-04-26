@@ -31,6 +31,15 @@ export function App() {
     () => dashboard.decisions.filter((decision) => decision.status === "active" || decision.needsHumanReview),
     [dashboard.decisions]
   );
+  const humanReviewCount = useMemo(
+    () => dashboard.decisions.filter((decision) => decision.needsHumanReview).length,
+    [dashboard.decisions]
+  );
+  const runningWorkerCount = useMemo(
+    () => dashboard.workerSessions.filter((session) => session.status === "running").length,
+    [dashboard.workerSessions]
+  );
+  const memoryCount = dashboard.memories.length;
 
   async function refresh() {
     const nextDashboard = await fetchDashboard();
@@ -110,6 +119,21 @@ export function App() {
           {error}
         </section>
       ) : null}
+
+      <section className="metric-grid" aria-label="supervision metrics">
+        <article className="metric-tile">
+          <span>{humanReviewCount}</span>
+          <p>Human Review</p>
+        </article>
+        <article className="metric-tile">
+          <span>{runningWorkerCount}</span>
+          <p>Running Workers</p>
+        </article>
+        <article className="metric-tile">
+          <span>{memoryCount}</span>
+          <p>Memory Items</p>
+        </article>
+      </section>
 
       <section className="dashboard-grid" aria-label="agent-fleet dashboard">
         <section className="panel goal-panel">

@@ -84,6 +84,14 @@ describe("App", () => {
     expect(screen.getByText("resume-1")).toBeInTheDocument();
   });
 
+  it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
+    render(<App />);
+
+    expect(await screen.findByText("Human Review")).toBeInTheDocument();
+    expect(screen.getByText("Running Workers")).toBeInTheDocument();
+    expect(screen.getByText("Memory Items")).toBeInTheDocument();
+  });
+
   it("submits a new goal to the Steward Agent", async () => {
     const fetchMock = vi
       .fn()
