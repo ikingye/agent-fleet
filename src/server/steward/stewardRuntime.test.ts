@@ -52,7 +52,7 @@ class FakeWorkerAdapter implements WorkerAdapter {
 }
 
 describe("StewardRuntime", () => {
-  it("prefers a ready remote execution node and records its host id", async () => {
+  it("dispatches high CPU and long-running goals to a ready remote execution node", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
     const localAdapter = new FakeWorkerAdapter();
     const remoteAdapter = new FakeWorkerAdapter();
@@ -65,7 +65,8 @@ describe("StewardRuntime", () => {
         status: "ready",
         sshHost: "worker@linux-builder.internal",
         workRoot: "/srv/agent-fleet",
-        proxyUrl: "http://127.0.0.1:1080"
+        proxyUrl: "http://127.0.0.1:1080",
+        tags: ["remote", "linux", "high-cpu"]
       });
       const runtime = new StewardRuntime({
         store,
@@ -77,8 +78,8 @@ describe("StewardRuntime", () => {
       await runtime.acceptGoal({
         projectName: "agent-fleet",
         workspacePath: "/projects/agent-fleet",
-        title: "Offload remote dispatch",
-        body: "Run this Worker Agent away from the Mac."
+        title: "Run long-running build",
+        body: "Run high CPU tests overnight so the Mac stays responsive."
       });
 
       const dashboard = await store.dashboard();
@@ -86,13 +87,69 @@ describe("StewardRuntime", () => {
       expect(localAdapter.startInputs).toHaveLength(0);
       expect(remoteAdapter.startInputs).toHaveLength(1);
       expect(remoteAdapter.startInputs[0].cwd).toBe("/srv/agent-fleet/agent-fleet/agent-fleet");
+      expect(remoteAdapter.startInputs[0].prompt).toMatch(
+        /^Worker Name: agent-fleet-run-long-running-build-remote-\d{12}\n/
+      );
+      expect(remoteAdapter.startInputs[0].prompt).toContain(
+        "Use the exact Worker Name as the heading of your final report."
+      );
       expect(dashboard.workerSessions[0]).toMatchObject({
         hostId: remoteNode.id,
         cwd: "/srv/agent-fleet/agent-fleet/agent-fleet"
       });
+      expect(dashboard.decisions[0].actionsJson).toContain("agent-fleet-run-long-running-build-remote-");
+      expect(dashboard.stewardCheckpoints[0].summary).toContain(
+        "agent-fleet-run-long-running-build-remote-"
+      );
       expect(dashboard.worktreeAssignments[0]).toMatchObject({
         repositoryPath: "/projects/agent-fleet",
         worktreePath: "/srv/agent-fleet/agent-fleet/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps ordinary small goals local even when remote capacity exists", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: "http://127.0.0.1:1080",
+        tags: ["remote", "linux", "high-cpu"],
+        capacity: 2
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Fix copy typo",
+        body: "Update one sentence in the docs."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(remoteAdapter.startInputs).toHaveLength(0);
+      expect(localAdapter.startInputs).toHaveLength(1);
+      expect(localAdapter.startInputs[0].prompt).toMatch(/^Worker Name: agent-fleet-fix-copy-typo-\d{12}\n/);
+      expect(localAdapter.startInputs[0].prompt).not.toContain("-remote-");
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: null,
+        cwd: "/projects/agent-fleet"
       });
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -265,7 +322,7 @@ describe("StewardRuntime", () => {
         projectName: "agent-fleet",
         workspacePath: "/projects/agent-fleet",
         title: "Use local fallback",
-        body: "Run locally if remote is not ready."
+        body: "Run high CPU build work locally if remote is not ready."
       });
 
       const dashboard = await store.dashboard();
@@ -273,6 +330,7 @@ describe("StewardRuntime", () => {
       expect(remoteAdapter.startInputs).toHaveLength(0);
       expect(localAdapter.startInputs).toHaveLength(1);
       expect(localAdapter.startInputs[0].cwd).toBe("/projects/agent-fleet");
+      expect(dashboard.decisions[0].actionsJson).toContain("Use local Worker fallback; no ready remote capacity is available.");
       expect(dashboard.workerSessions[0]).toMatchObject({
         hostId: null,
         cwd: "/projects/agent-fleet"
@@ -330,9 +388,11 @@ describe("StewardRuntime", () => {
       expect(dashboard.stewardCheckpoints[0]).toMatchObject({
         reason: "dispatch",
         goalIds: [goal.id],
-        workerSessionIds: [dashboard.workerSessions[0].id],
-        nextAction: `Monitor Worker session ${dashboard.workerSessions[0].id}; resume with codexyoloproxy resume resume-bootstrap-agent-fleet if the Steward session is interrupted.`
+        workerSessionIds: [dashboard.workerSessions[0].id]
       });
+      expect(dashboard.stewardCheckpoints[0].nextAction).toContain(
+        `Monitor Worker session ${dashboard.workerSessions[0].id}; resume with codexyoloproxy resume resume-bootstrap-agent-fleet if the Steward session is interrupted. Worker Name: agent-fleet-bootstrap-agent-fleet-`
+      );
       expect(dashboard.events.map((event) => event.type)).toEqual([
         "goal.created",
         "decision.recorded",

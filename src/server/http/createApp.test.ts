@@ -808,7 +808,8 @@ describe("API routes", () => {
           status: "ready",
           sshHost: "aicp-hhht-231",
           workRoot: "/root/agent-fleet-workspaces",
-          proxyUrl: "http://127.0.0.1:1080"
+          proxyUrl: "http://127.0.0.1:1080",
+          tags: ["remote", "linux", "high-cpu"]
         }
       });
       const node = nodeResponse.json();
@@ -819,8 +820,8 @@ describe("API routes", () => {
         payload: {
           projectName: "agent-fleet",
           workspacePath: "/projects/agent-fleet",
-          title: "Remote dispatch",
-          body: "Use a safe fake Worker command."
+          title: "Remote build dispatch",
+          body: "Use a safe fake Worker command for a high CPU build and test run."
         }
       });
       const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
@@ -830,8 +831,11 @@ describe("API routes", () => {
       expect(sshRunner.inputs).toHaveLength(1);
       expect(sshRunner.inputs[0]).toMatchObject({
         command: "ssh",
-        stdin: expect.stringContaining("Goal: Remote dispatch")
+        stdin: expect.stringContaining("Goal: Remote build dispatch")
       });
+      expect(sshRunner.inputs[0].stdin).toMatch(
+        /^Worker Name: agent-fleet-remote-build-dispatch-remote-\d{12}\n/
+      );
       expect(sshRunner.inputs[0].args.slice(0, -1)).toEqual(["aicp-hhht-231"]);
       expect(sshRunner.inputs[0].args.at(-1)).toContain(
         "cd '\\''/root/agent-fleet-workspaces/agent-fleet/agent-fleet'\\''"

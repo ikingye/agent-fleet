@@ -153,18 +153,22 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "agent-fleet" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Goals" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Workers" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Recovery" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Resources" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Steward Intake" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Goals" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Key Decisions" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Worker Operations" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Recovery / Audit" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Memory" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Active Worker Summary" })).toBeInTheDocument();
     expect(screen.getByText("Start Worker Agent for goal")).toBeInTheDocument();
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.getByText("owner double-check")).toBeInTheDocument();
-    expect(screen.getByText("1 running")).toBeInTheDocument();
+    expect(screen.getAllByText("1 running").length).toBeGreaterThan(0);
+    expect(screen.queryByRole("heading", { level: 2, name: "Worker Operations" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Recovery Context" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Remote Nodes" })).not.toBeInTheDocument();
     expect(screen.queryByText("codexyoloproxy")).not.toBeInTheDocument();
     expect(screen.queryByText("pid 4242")).not.toBeInTheDocument();
     expect(screen.queryByText("codexyoloproxy resume resume-1")).not.toBeInTheDocument();
@@ -177,6 +181,8 @@ describe("App", () => {
   it("shows Worker session debug details only after expanding operations", async () => {
     const user = userEvent.setup();
     render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Workers" }));
 
     const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
     expect(within(workerPanel).getByText("1 running")).toBeInTheDocument();
@@ -200,11 +206,17 @@ describe("App", () => {
   });
 
   it("renders worktree assignments and remote execution nodes", async () => {
+    const user = userEvent.setup();
     render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Recovery" }));
 
     expect(await screen.findByRole("heading", { level: 2, name: "Worktrees" })).toBeInTheDocument();
     expect(screen.getByText("steward/dashboard-execution")).toBeInTheDocument();
     expect(screen.getByText("/worktrees/agent-fleet-dashboard-execution")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Resources" }));
+
     expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
     expect(screen.getByText("worker@remote-build-1.internal")).toBeInTheDocument();
     expect(screen.getByText("https://proxy.agent-fleet.internal")).toBeInTheDocument();
@@ -242,6 +254,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("tab", { name: "Resources" }));
+
     await user.type(await screen.findByLabelText("Remote node name"), "mac-mini-builder");
     await user.type(screen.getByLabelText("SSH host"), "worker@mac-mini.local");
     await user.type(screen.getByLabelText("Work root"), "/Users/worker/agent-fleet");
@@ -273,7 +287,11 @@ describe("App", () => {
   });
 
   it("renders recent control-plane audit events", async () => {
+    const user = userEvent.setup();
     render(<App />);
+
+    expect(screen.queryByRole("heading", { level: 2, name: "Events / Audit" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("tab", { name: "Recovery" }));
 
     expect(await screen.findByRole("heading", { level: 2, name: "Events / Audit" })).toBeInTheDocument();
     expect(screen.getByText("decision.recorded")).toBeInTheDocument();
@@ -283,6 +301,7 @@ describe("App", () => {
   });
 
   it("keeps active Worker sessions visible while collapsing stale failed history", async () => {
+    const user = userEvent.setup();
     const staleDashboard = {
       ...dashboard,
       workerSessions: [
@@ -367,6 +386,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("tab", { name: "Workers" }));
+
     const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
     expect(within(workerPanel).getByText("/worktrees/active")).toBeInTheDocument();
     expect(within(workerPanel).getByText("/worktrees/paused")).toBeInTheDocument();
@@ -416,6 +437,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("tab", { name: "Workers" }));
+
     const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
     await user.click(within(workerPanel).getByText("History"));
 
@@ -458,7 +481,10 @@ describe("App", () => {
   });
 
   it("shows goal target directories", async () => {
+    const user = userEvent.setup();
     render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Goals" }));
 
     expect(await screen.findByText("target")).toBeInTheDocument();
     expect(screen.getAllByText("~/code/project/agent-fleet").length).toBeGreaterThan(0);
@@ -503,8 +529,12 @@ describe("App", () => {
 
     render(<App />);
 
+    expect((await screen.findAllByText("~/code/project/mahjong")).length).toBeGreaterThan(0);
+    await userEvent.click(screen.getByRole("tab", { name: "Goals" }));
     expect(await screen.findAllByText("~/code/project/mahjong")).toHaveLength(3);
-    expect(screen.getAllByText("~/code/project/mahjong/.worktrees/worker-1")).toHaveLength(2);
+    await userEvent.click(screen.getByRole("tab", { name: "Recovery" }));
+    expect(screen.getAllByText("~/code/project/mahjong/.worktrees/worker-1").length).toBeGreaterThanOrEqual(2);
+    await userEvent.click(screen.getByRole("tab", { name: "Resources" }));
     expect(screen.getByText("~/code/project/mahjong/.worktrees")).toBeInTheDocument();
     expect(screen.queryByText("/Users/yewang/code/project/mahjong")).not.toBeInTheDocument();
   });

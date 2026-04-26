@@ -2,6 +2,8 @@
 
 Remote execution keeps the local Mac responsive while Worker Agents, builds, tests, and browser automation run on a pool of remote Linux machines.
 
+For Codex-specific remote bootstrap, authentication, and proxy verification steps, see [Remote Codex Bootstrap](codex-bootstrap.md).
+
 ## Target Behavior
 
 - The Steward Agent treats remote servers as stateless compute resources, not project owners or durable sources of truth.
@@ -144,13 +146,15 @@ When a remote node is marked `ready`, the API rejects clearly unusable records s
 When a goal is accepted:
 
 - The Steward detects simple resource needs from the goal title and body.
+- Remote offload is selective: ordinary small goals stay local even when remote capacity exists.
 - GPU goals currently match keywords such as `gpu`, `cuda`, `训练`, `模型`, `推理`, and `渲染`.
-- CPU-heavy goals currently match keywords such as `heavy`, `高负载`, `并行`, `build`, and `test`.
+- CPU-heavy or long-running goals currently match keywords such as `long-running`, `overnight`, `持续`, `长时间`, `跑一晚`, `高cpu`, `cpu`, `heavy`, `high-load`, `高负载`, `并行`, `批量`, `build`, and `test`.
 - The Steward filters for ready remote nodes whose `sshHost` is set, whose `workRoot` is absolute, and whose current running Worker sessions are below `capacity`.
-- The scheduler prefers nodes whose tags satisfy the detected resource need, then nodes with more available slots, then dashboard order for deterministic tie-breaking.
+- The scheduler only selects remote nodes whose tags satisfy the detected resource need, then prefers nodes with more available slots, then dashboard order for deterministic tie-breaking.
 - The Worker session uses the SSH Worker adapter and records `hostId` as the selected execution node id.
-- If no ready remote node has capacity, the Steward uses the local Worker adapter and records `hostId: null`.
+- If no matching ready remote node has capacity, the Steward uses the local Worker adapter, records `hostId: null`, and includes the local fallback in the dispatch decision actions.
 - Remote Worker commands receive proxy environment variables when the selected node has `proxyUrl` set.
+- Remote-dispatched Worker Names include the `remote` marker before the timestamp: `<project-name>-<worker-purpose>-remote-<YYYYMMDDHHmm>`. Local Worker Names remain `<project-name>-<worker-purpose>-<YYYYMMDDHHmm>`. The Steward puts the Worker Name at the top of the Worker prompt and repeats it in dispatch audit records.
 
 Workspace sync is not implemented yet. Until it is, a remote Worker can only succeed when the expected source checkout already exists or the Worker command itself can create/sync it from git. This is the remaining blocker before treating the remote pool as fully disposable compute.
 

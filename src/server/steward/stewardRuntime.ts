@@ -26,6 +26,9 @@ interface WorkerPlacement {
   hostId: string | null;
   cwd: string;
   worktreePath: string;
+  workerName: string;
+  resourceTags: string[];
+  remoteNodeName: string | null;
 }
 
 export interface AcceptGoalInput {
@@ -45,6 +48,10 @@ export class StewardRuntime {
 
   async acceptGoal(input: AcceptGoalInput): Promise<Goal> {
     const goal = await this.options.store.createGoal(input);
+    const repositoryPath = input.workspacePath;
+    const worktreeRoot = this.options.worktreeRoot ?? join(repositoryPath, ".worktrees");
+    let plannedWorktree: PlannedWorktree | null = null;
+    const placement = await this.selectWorkerPlacement(goal, input.workspacePath);
     const decision = await this.options.store.recordDecision({
       goalId: goal.id,
       workerSessionId: null,
@@ -57,14 +64,12 @@ export class StewardRuntime {
       status: "active",
       actions: [
         "Create an auditable Steward decision",
+        `Worker Name: ${placement.workerName}`,
+        ...buildPlacementActions(placement),
         "Start a Worker Agent session",
         "Track resume metadata for recovery"
       ]
     });
-    const repositoryPath = input.workspacePath;
-    const worktreeRoot = this.options.worktreeRoot ?? join(repositoryPath, ".worktrees");
-    let plannedWorktree: PlannedWorktree | null = null;
-    const placement = await this.selectWorkerPlacement(goal, input.workspacePath);
     let workerCwd = placement.cwd;
 
     if (placement.hostId === null && this.options.worktreeRunner !== undefined) {
@@ -82,7 +87,7 @@ export class StewardRuntime {
     const workerResult = await placement.adapter.start({
       goalTitle: goal.title,
       cwd: workerCwd,
-      prompt: this.buildWorkerPrompt(goal.title, goal.body)
+      prompt: this.buildWorkerPrompt(placement.workerName, goal.title, goal.body)
     });
     const session = await this.options.store.createWorkerSession({
       goalId: goal.id,
@@ -129,9 +134,10 @@ export class StewardRuntime {
     const updatedGoal = await this.options.store.updateGoalStatus(goal.id, goalStatusForWorkerStatus(workerResult.status));
     await this.options.store.recordStewardCheckpoint({
       reason: "dispatch",
-      summary: `Worker session ${session.id} recorded for goal: ${goal.title}`,
+      summary: `Worker ${placement.workerName} recorded as session ${session.id} for goal: ${goal.title}`,
       nextAction: buildDispatchNextAction(
         session.id,
+        placement.workerName,
         session.kind,
         workerResult.command,
         workerResult.resumeId,
@@ -146,7 +152,8 @@ export class StewardRuntime {
   }
 
   private async selectWorkerPlacement(goal: Goal, workspacePath: string): Promise<WorkerPlacement> {
-    const remoteNode = await this.selectReadyRemoteNode(goal);
+    const resourceTags = detectGoalResourceTags(goal);
+    const remoteNode = resourceTags.length === 0 ? null : await this.selectReadyRemoteNode(resourceTags);
 
     if (remoteNode !== null && this.options.remoteWorkerAdapterFactory !== undefined) {
       const remoteWorkspacePath = buildRemoteWorkspacePath(remoteNode, goal.projectName, workspacePath);
@@ -155,7 +162,10 @@ export class StewardRuntime {
         adapter: this.options.remoteWorkerAdapterFactory(remoteNode),
         hostId: remoteNode.id,
         cwd: remoteWorkspacePath,
-        worktreePath: remoteWorkspacePath
+        worktreePath: remoteWorkspacePath,
+        workerName: buildWorkerName(goal, true),
+        resourceTags,
+        remoteNodeName: remoteNode.name
       };
     }
 
@@ -163,13 +173,15 @@ export class StewardRuntime {
       adapter: this.options.workerAdapter,
       hostId: null,
       cwd: workspacePath,
-      worktreePath: workspacePath
+      worktreePath: workspacePath,
+      workerName: buildWorkerName(goal, false),
+      resourceTags,
+      remoteNodeName: null
     };
   }
 
-  private async selectReadyRemoteNode(goal: Goal): Promise<ExecutionNode | null> {
+  private async selectReadyRemoteNode(requiredTags: string[]): Promise<ExecutionNode | null> {
     const dashboard = await this.options.store.dashboard();
-    const requiredTags = detectGoalResourceTags(goal);
     const runningByHostId = new Map<string, number>();
 
     for (const session of dashboard.workerSessions) {
@@ -204,7 +216,7 @@ export class StewardRuntime {
 
         return { node, index, availableSlots, matchedRequiredTags };
       })
-      .filter((candidate) => candidate.availableSlots > 0);
+      .filter((candidate) => candidate.availableSlots > 0 && candidate.matchedRequiredTags === requiredTags.length);
 
     if (candidates.length === 0) {
       return null;
@@ -268,10 +280,13 @@ export class StewardRuntime {
     return correction;
   }
 
-  private buildWorkerPrompt(title: string, body: string): string {
+  private buildWorkerPrompt(workerName: string, title: string, body: string): string {
     return [
+      `Worker Name: ${workerName}`,
+      "",
       "You are a Worker Agent operating under the Steward Agent.",
       "Treat Steward instructions as the human owner's instructions.",
+      "Use the exact Worker Name as the heading of your final report.",
       "",
       `Goal: ${title}`,
       "",
@@ -325,11 +340,47 @@ function detectGoalResourceTags(goal: Goal): string[] {
     tags.add("gpu");
   }
 
-  if (/(heavy|高负载|并行|build|test)/i.test(text)) {
+  if (/(long-running|overnight|持续|长时间|跑一晚|高cpu|cpu|heavy|high-load|高负载|并行|批量|build|test)/i.test(text)) {
     tags.add("high-cpu");
   }
 
   return [...tags];
+}
+
+function buildPlacementActions(placement: WorkerPlacement): string[] {
+  if (placement.hostId !== null) {
+    return [
+      `Dispatch to remote execution node ${placement.remoteNodeName ?? placement.hostId} for ${placement.resourceTags.join(", ")} work`
+    ];
+  }
+
+  if (placement.resourceTags.length > 0) {
+    return ["Use local Worker fallback; no ready remote capacity is available."];
+  }
+
+  return ["Use local Worker adapter; goal does not require remote offload."];
+}
+
+function buildWorkerName(goal: Goal, remote: boolean): string {
+  const timestamp = formatWorkerTimestamp(new Date());
+  const remoteMarker = remote ? "-remote" : "";
+
+  return `${slugify(goal.projectName)}-${slugify(goal.title)}${remoteMarker}-${timestamp}`;
+}
+
+function formatWorkerTimestamp(date: Date): string {
+  const parts = [
+    date.getFullYear(),
+    date.getMonth() + 1,
+    date.getDate(),
+    date.getHours(),
+    date.getMinutes()
+  ];
+  const [year, month, day, hour, minute] = parts.map((part, index) =>
+    index === 0 ? String(part) : String(part).padStart(2, "0")
+  );
+
+  return `${year}${month}${day}${hour}${minute}`;
 }
 
 function workspaceName(workspacePath: string): string {
@@ -362,6 +413,7 @@ function goalStatusForWorkerStatus(status: "running" | "completed" | "failed") {
 
 function buildDispatchNextAction(
   workerSessionId: string,
+  workerName: string,
   kind: WorkerAdapter["kind"],
   command: string,
   resumeId: string | null,
@@ -372,10 +424,10 @@ function buildDispatchNextAction(
     const output = summarizeWorkerOutput(initialOutput);
 
     if (output === "") {
-      return `Review failed Worker session ${workerSessionId}; ${command} did not start.`;
+      return `Review failed Worker session ${workerSessionId} (${workerName}); ${command} did not start.`;
     }
 
-    return `Review failed Worker session ${workerSessionId}; ${output}`;
+    return `Review failed Worker session ${workerSessionId} (${workerName}); ${output}`;
   }
 
   const resumeCommand = buildResumeCommand({
@@ -385,10 +437,10 @@ function buildDispatchNextAction(
   });
 
   if (resumeCommand === null) {
-    return `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted.`;
+    return `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted. Worker Name: ${workerName}.`;
   }
 
-  return `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted.`;
+  return `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted. Worker Name: ${workerName}.`;
 }
 
 function summarizeWorkerOutput(output: string): string {

@@ -68,8 +68,19 @@ function isKeyDecision(decision: StewardDecision): boolean {
   );
 }
 
+type DashboardTab = "overview" | "goals" | "workers" | "recovery" | "resources";
+
+const dashboardTabs: Array<{ id: DashboardTab; label: string }> = [
+  { id: "overview", label: "Overview" },
+  { id: "goals", label: "Goals" },
+  { id: "workers", label: "Workers" },
+  { id: "recovery", label: "Recovery" },
+  { id: "resources", label: "Resources" }
+];
+
 export function App() {
   const [dashboard, setDashboard] = useState<ClientDashboardData>(emptyDashboard);
+  const [selectedTab, setSelectedTab] = useState<DashboardTab>("overview");
   const [projectName, setProjectName] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
@@ -261,7 +272,30 @@ export function App() {
         </section>
       ) : null}
 
-      <section className="metric-grid" aria-label="supervision metrics">
+      <nav aria-label="Dashboard sections" className="dashboard-tabs" role="tablist">
+        {dashboardTabs.map((tab) => (
+          <button
+            aria-controls={`${tab.id}-panel`}
+            aria-selected={selectedTab === tab.id}
+            className={selectedTab === tab.id ? "tab-button active-tab" : "tab-button"}
+            id={`${tab.id}-tab`}
+            key={tab.id}
+            onClick={() => setSelectedTab(tab.id)}
+            role="tab"
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
+
+      <section
+        aria-labelledby={`${selectedTab}-tab`}
+        className="tab-panel"
+        id={`${selectedTab}-panel`}
+        role="tabpanel"
+      >
+      <section className="metric-grid" aria-label="supervision metrics" hidden={selectedTab !== "overview"}>
         <article className="metric-tile">
           <span>{humanReviewCount}</span>
           <p>Human Review</p>
@@ -284,8 +318,8 @@ export function App() {
         </article>
       </section>
 
-      <section className="dashboard-grid" aria-label="agent-fleet dashboard">
-        <section className="panel intake-panel">
+      <section className={`dashboard-grid tab-${selectedTab}`} aria-label="agent-fleet dashboard">
+        <section className="panel intake-panel" hidden={selectedTab !== "overview"}>
           <div className="panel-heading">
             <p className="eyebrow">Human Intent</p>
             <h2>Steward Intake</h2>
@@ -323,7 +357,7 @@ export function App() {
           </form>
         </section>
 
-        <section className="panel chat-panel">
+        <section className="panel chat-panel" hidden={selectedTab !== "overview"}>
           <div className="panel-heading">
             <p className="eyebrow">Durable Conversation</p>
             <h2>Steward Chat</h2>
@@ -382,7 +416,7 @@ export function App() {
           </form>
         </section>
 
-        <section className="panel goals-panel">
+        <section className="panel goals-panel" hidden={selectedTab !== "goals"}>
           <div className="panel-heading compact-heading">
             <p className="eyebrow">Targets</p>
             <h2>Goals</h2>
@@ -412,7 +446,7 @@ export function App() {
           </div>
         </section>
 
-        <section className="panel decision-panel">
+        <section className="panel decision-panel" hidden={selectedTab !== "overview"}>
           <div className="panel-heading">
             <p className="eyebrow">Owner Review</p>
             <h2>Key Decisions</h2>
@@ -472,7 +506,37 @@ export function App() {
           </div>
         </section>
 
-        <section aria-labelledby="worker-sessions-heading" className="panel worker-panel">
+        <section className="panel overview-worker-panel" hidden={selectedTab !== "overview"}>
+          <div className="panel-heading">
+            <p className="eyebrow">Operations Summary</p>
+            <h2>Active Worker Summary</h2>
+          </div>
+          <div className="item-list scroll-list compact-list">
+            {dashboard.workerSessions.length === 0 ? (
+              <p className="empty-copy">No Worker Agent sessions yet.</p>
+            ) : (
+              <>
+                <div className="worker-ops-summary">
+                  <span>{runningWorkerCount} running</span>
+                  <span>{visibleWorkerSessions.length} active</span>
+                  <span>{workerCount} total</span>
+                </div>
+                {visibleWorkerSessions.length === 0 ? <p className="empty-copy">No active Worker Agent sessions.</p> : null}
+                {visibleWorkerSessions.map((session) => (
+                  <article className="item-row worker-row compact-row" key={session.id}>
+                    <div>
+                      <h3>{session.kind}</h3>
+                      <p>{displayPath(session.cwd)}</p>
+                    </div>
+                    <span className={`pill status-${session.status}`}>{session.status}</span>
+                  </article>
+                ))}
+              </>
+            )}
+          </div>
+        </section>
+
+        <section aria-labelledby="worker-sessions-heading" className="panel worker-panel" hidden={selectedTab !== "workers"}>
           <div className="panel-heading">
             <p className="eyebrow">Operations</p>
             <h2 id="worker-sessions-heading">Worker Operations</h2>
@@ -604,10 +668,10 @@ export function App() {
           </div>
         </section>
 
-        <section className="panel recovery-panel">
+        <section className="panel recovery-panel" hidden={selectedTab !== "recovery"}>
           <div className="panel-heading">
             <p className="eyebrow">Recovery Context</p>
-            <h2>Recovery / Audit</h2>
+            <h2>Recovery Context</h2>
           </div>
           <div className="recovery-grid">
             <section className="subpanel">
@@ -634,6 +698,41 @@ export function App() {
                         </dl>
                       </div>
                       <span className={`pill status-${assignment.status}`}>{assignment.status}</span>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <section className="subpanel">
+              <div className="subpanel-heading">
+                <h2>Checkpoints</h2>
+              </div>
+              <div className="item-list scroll-list mini-list">
+                {dashboard.stewardCheckpoints.length === 0 ? (
+                  <p className="empty-copy">No Steward checkpoints recorded.</p>
+                ) : (
+                  dashboard.stewardCheckpoints.map((checkpoint) => (
+                    <article className="event-row compact-event-row" key={checkpoint.id}>
+                      <div className="event-head">
+                        <h3>{checkpoint.reason}</h3>
+                        <time dateTime={checkpoint.createdAt}>{formatEventTime(checkpoint.createdAt)}</time>
+                      </div>
+                      <p>{checkpoint.summary}</p>
+                      <dl className="resource-facts compact-facts">
+                        <div>
+                          <dt>next</dt>
+                          <dd>{checkpoint.nextAction}</dd>
+                        </div>
+                        <div>
+                          <dt>goals</dt>
+                          <dd>{checkpoint.goalIds.length}</dd>
+                        </div>
+                        <div>
+                          <dt>workers</dt>
+                          <dd>{checkpoint.workerSessionIds.length}</dd>
+                        </div>
+                      </dl>
                     </article>
                   ))
                 )}
@@ -683,7 +782,7 @@ export function App() {
           </div>
         </section>
 
-        <details className="panel node-panel secondary-panel" open>
+        <details className="panel node-panel secondary-panel" hidden={selectedTab !== "resources"} open>
           <summary>
             <span className="eyebrow">Remote Capacity</span>
             <h2>Remote Nodes</h2>
@@ -788,7 +887,7 @@ export function App() {
           </div>
         </details>
 
-        <details className="panel memory-panel secondary-panel">
+        <details className="panel memory-panel secondary-panel" hidden={selectedTab !== "resources"} open>
           <summary>
             <span className="eyebrow">Learning</span>
             <h2>Memory</h2>
@@ -809,6 +908,7 @@ export function App() {
             )}
           </div>
         </details>
+      </section>
       </section>
     </main>
   );
