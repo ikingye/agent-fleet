@@ -2,13 +2,16 @@ import cors from "@fastify/cors";
 import fastify from "fastify";
 import { join } from "node:path";
 import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
+import { probeRemoteExecutionNode, type RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import {
   GitRemoteWorkspaceProvisioner,
   type RemoteWorkspaceProvisioner
 } from "../remote/remoteWorkspaceProvisioner.js";
+import { probeRemoteWorkerPid } from "../remote/remoteWorkerProbe.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
+import { createDashboardWorkerProcessProbe } from "../steward/remoteSupervisorRuntime.js";
 import {
   probeLocalWorkerProcess,
   reconcileWorkerSessions
@@ -36,6 +39,7 @@ export interface CreateAppOptions {
   remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
   remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
   remoteSshWorkerRunner?: SshWorkerProcessRunner;
+  remoteCommandRunner?: RemoteCommandRunner;
   workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
 }
 
@@ -240,13 +244,6 @@ function buildDeterministicStewardResponse(
   return pieces.join(" ");
 }
 
-function localWorkerDashboard(dashboard: DashboardData): DashboardData {
-  return {
-    ...dashboard,
-    workerSessions: dashboard.workerSessions.filter((session) => session.hostId === null || session.hostId === "local")
-  };
-}
-
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
@@ -296,11 +293,11 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.get("/api/recovery", async () => buildStewardRecoveryReport(await store.dashboard()));
 
   app.post("/api/recovery/reconcile", async () => {
-    const localDashboard = localWorkerDashboard(await store.dashboard());
+    const dashboard = await store.dashboard();
 
     return reconcileWorkerSessions({
-      dashboard: localDashboard,
-      probeProcess: options.workerProcessProbe ?? probeLocalWorkerProcess,
+      dashboard,
+      probeProcess: buildWorkerProcessProbe(dashboard, options),
       updateWorkerSessionStatus(input) {
         return store.updateWorkerSessionStatus(input);
       }
@@ -308,13 +305,13 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   app.post("/api/steward/autonomy/run", async () => {
-    const localDashboard = localWorkerDashboard(await store.dashboard());
-    const supervisedSessions = localDashboard.workerSessions.filter(
+    const dashboard = await store.dashboard();
+    const supervisedSessions = dashboard.workerSessions.filter(
       (session) => session.status === "starting" || session.status === "running"
     );
     const result = await reconcileWorkerSessions({
-      dashboard: localDashboard,
-      probeProcess: options.workerProcessProbe ?? probeLocalWorkerProcess,
+      dashboard,
+      probeProcess: buildWorkerProcessProbe(dashboard, options),
       updateWorkerSessionStatus(input) {
         return store.updateWorkerSessionStatus(input);
       }
@@ -507,7 +504,58 @@ export async function createApp(options: CreateAppOptions = {}) {
     return store.upsertExecutionNode(input);
   });
 
+  app.post("/api/execution-nodes/:id/probe", async (request, reply) => {
+    const params = request.params as { id?: string };
+    const nodeId = requireString(params.id, "id");
+    const dashboard = await store.dashboard();
+    const node = dashboard.executionNodes.find((item) => item.id === nodeId);
+
+    if (node === undefined) {
+      return reply.code(404).send({
+        error: "Not Found",
+        message: `Execution node not found: ${nodeId}`
+      });
+    }
+
+    try {
+      return await probeRemoteExecutionNode({
+        node,
+        codexCommand: workerCommand,
+        runner: options.remoteCommandRunner
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
   return app;
+}
+
+function buildWorkerProcessProbe(
+  dashboard: DashboardData,
+  options: CreateAppOptions
+): Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"] {
+  if (options.workerProcessProbe !== undefined) {
+    return options.workerProcessProbe;
+  }
+
+  return createDashboardWorkerProcessProbe({
+    dashboard,
+    localProbe: probeLocalWorkerProcess,
+    remotePidProbe(input) {
+      return probeRemoteWorkerPid({
+        ...input,
+        runner: options.remoteCommandRunner
+      });
+    }
+  });
 }
 
 function buildRemoteProxyEnv(proxyUrl: string | null): Readonly<Record<string, string>> {

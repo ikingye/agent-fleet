@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ChildProcessSshWorkerRunner,
   RemoteSshWorkerAdapter,
   buildSshWorkerCommand,
   type SshWorkerProcessInput,
@@ -41,6 +42,8 @@ describe("buildSshWorkerCommand", () => {
     expect(built.args.at(-1)).toContain("'\\''codexyoloproxy'\\''");
     expect(built.args.at(-1)).toContain("'\\''--task'\\''");
     expect(built.args.at(-1)).toContain("'\\''say hi; reboot'\\''");
+    expect(built.args.at(-1)).toContain("agent-fleet remote pid:");
+    expect(built.args.at(-1)).toContain('wait "$agent_fleet_worker_pid"');
   });
 });
 
@@ -130,5 +133,61 @@ describe("RemoteSshWorkerAdapter", () => {
     expect(result.status).toBe("running");
     expect(result.resumeId).toBeNull();
     expect(result.initialOutput).toBe("Worker process started with pid 9090");
+  });
+
+  it("extracts a remote pid marker when the runner leaves pid empty", async () => {
+    const runner = new CapturingRunner({
+      status: "running",
+      output: "accepted remote prompt\nagent-fleet remote pid: 7070\n",
+      pid: null
+    });
+    const adapter = new RemoteSshWorkerAdapter({
+      sshHost: "worker@builder.internal",
+      workerCommand: "codexyoloproxy",
+      runner
+    });
+
+    const result = await adapter.start({
+      goalTitle: "Remote offload",
+      prompt: "Run remotely.",
+      cwd: "/srv/agent-fleet/worktrees/remote"
+    });
+
+    expect(result.pid).toBe(7070);
+  });
+});
+
+describe("ChildProcessSshWorkerRunner", () => {
+  it("reports the remote Worker pid marker instead of the local ssh client pid", async () => {
+    const result = await new ChildProcessSshWorkerRunner().run({
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "console.log('agent-fleet remote pid: 7777');",
+          "setTimeout(() => {}, 200);"
+        ].join("")
+      ],
+      stdin: "",
+      startupTimeoutMs: 100
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.pid).toBe(7777);
+    expect(result.output).toContain("agent-fleet remote pid: 7777");
+  });
+
+  it("does not expose the local ssh client pid when no remote pid marker is available", async () => {
+    const result = await new ChildProcessSshWorkerRunner().run({
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => {}, 200);"],
+      stdin: "",
+      startupTimeoutMs: 20
+    });
+
+    expect(result.status).toBe("running");
+    expect(result.pid).toBeNull();
+    expect(result.output).toContain("Remote Worker pid was not reported");
+    expect(result.output).toContain("local ssh client pid");
   });
 });

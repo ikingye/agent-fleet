@@ -49,6 +49,7 @@ export interface RemoteSshWorkerAdapterOptions {
 }
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 1500;
+const REMOTE_PID_PREFIX = "agent-fleet remote pid:";
 
 export class RemoteSshWorkerAdapter implements WorkerAdapter {
   readonly kind: WorkerKind;
@@ -83,7 +84,7 @@ export class RemoteSshWorkerAdapter implements WorkerAdapter {
       command: built.displayCommand,
       cwd: input.cwd,
       resumeId: extractResumeId(processResult.output),
-      pid: processResult.pid,
+      pid: processResult.pid ?? extractRemotePid(processResult.output),
       status: processResult.status,
       initialOutput: processResult.output
     };
@@ -107,15 +108,21 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
 
         settled = true;
         clearTimeout(timer);
+        const settledOutput = `${output}${extraOutput}`;
         resolve({
           status,
-          output: `${output}${extraOutput}`,
-          pid: child.pid ?? null
+          output: settledOutput,
+          pid: extractRemotePid(settledOutput)
         });
       };
 
       const timer = setTimeout(() => {
-        const fallback = output.trim() === "" ? `Worker process started with pid ${child.pid ?? "unknown"}` : "";
+        const fallback =
+          extractRemotePid(output) === null
+            ? `\nRemote Worker pid was not reported; local ssh client pid ${
+                child.pid ?? "unknown"
+              } cannot be used for remote lifecycle checks.`
+            : "";
         settle("running", fallback);
       }, input.startupTimeoutMs);
 
@@ -153,7 +160,14 @@ export function buildSshWorkerCommand(input: BuildSshWorkerCommandInput): BuiltS
   const workerInvocation = [workerCommand, ...(input.workerArgs ?? [])].map(shellQuote).join(" ");
   const proxyAssignments = buildProxyAssignments(input.proxyEnv ?? {});
   const envPrefix = proxyAssignments.length === 0 ? "" : `env ${proxyAssignments.join(" ")} `;
-  const script = `cd ${shellQuote(cwd)} && exec ${envPrefix}${workerInvocation}`;
+  const script = [
+    `cd ${shellQuote(cwd)} && {`,
+    `${envPrefix}${workerInvocation} &`,
+    "agent_fleet_worker_pid=$!",
+    `printf '\\n${REMOTE_PID_PREFIX} %s\\n' "$agent_fleet_worker_pid"`,
+    'wait "$agent_fleet_worker_pid"',
+    "}"
+  ].join(" ");
   const remoteCommand = `sh -lc ${shellQuote(script)}`;
   const args = [...(input.sshArgs ?? []), sshHost, remoteCommand];
 
@@ -185,6 +199,18 @@ function extractResumeId(output: string): string | null {
   const match = output.match(/resume(?:[\s_-]+id)?\s*[:=]\s*([^\s]+)/i);
 
   return match?.[1] ?? null;
+}
+
+function extractRemotePid(output: string): number | null {
+  const match = output.match(/agent-fleet remote pid:\s*(\d+)/i);
+
+  if (match === null) {
+    return null;
+  }
+
+  const pid = Number.parseInt(match[1], 10);
+
+  return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
 }
 
 function normalizeRequired(name: string, value: string): string {
