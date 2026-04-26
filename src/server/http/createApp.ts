@@ -9,6 +9,8 @@ export interface CreateAppOptions {
   statePath?: string;
   workerCommand?: string;
   defaultWorkerCwd?: string;
+  defaultRepositoryPath?: string;
+  worktreeRoot?: string;
   workerAdapter?: WorkerAdapter;
 }
 
@@ -32,10 +34,13 @@ export async function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const store = await JsonControlPlaneStore.open(options.statePath ?? defaultStatePath());
   const workerAdapter = options.workerAdapter ?? new CommandWorkerAdapter(options.workerCommand ?? "codexyoloproxy");
+  const defaultRepositoryPath = options.defaultRepositoryPath ?? process.cwd();
   const steward = new StewardRuntime({
     store,
     workerAdapter,
-    defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd()
+    defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd(),
+    defaultRepositoryPath,
+    worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees")
   });
 
   await app.register(cors, {

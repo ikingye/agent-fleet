@@ -30,7 +30,9 @@ describe("StewardRuntime", () => {
       const runtime = new StewardRuntime({
         store,
         workerAdapter: new FakeWorkerAdapter(),
-        defaultWorkerCwd: "/worktrees/agent-fleet"
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        defaultRepositoryPath: "/repo/agent-fleet",
+        worktreeRoot: "/repo/agent-fleet/.worktrees"
       });
 
       const goal = await runtime.acceptGoal({
@@ -58,10 +60,18 @@ describe("StewardRuntime", () => {
         resumeId: "resume-bootstrap-agent-fleet",
         status: "running"
       });
+      expect(dashboard.worktreeAssignments[0]).toMatchObject({
+        workerSessionId: dashboard.workerSessions[0].id,
+        repositoryPath: "/repo/agent-fleet",
+        worktreePath: `/repo/agent-fleet/.worktrees/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
+        branchName: `agent-fleet/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
+        status: "planned"
+      });
       expect(dashboard.events.map((event) => event.type)).toEqual([
         "goal.created",
         "decision.recorded",
         "worker.started",
+        "worktree.planned",
         "goal.updated"
       ]);
     } finally {

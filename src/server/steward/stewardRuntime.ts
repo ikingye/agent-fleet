@@ -1,11 +1,15 @@
+import { join } from "node:path";
 import type { Goal, DecisionCorrection } from "../../shared/types.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
+import { planWorktree } from "../worktrees/worktreeManager.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
 export interface StewardRuntimeOptions {
   store: JsonControlPlaneStore;
   workerAdapter: WorkerAdapter;
   defaultWorkerCwd: string;
+  defaultRepositoryPath?: string;
+  worktreeRoot?: string;
 }
 
 export interface AcceptGoalInput {
@@ -56,6 +60,21 @@ export class StewardRuntime {
       resumeId: workerResult.resumeId,
       status: workerResult.status,
       lastOutput: workerResult.initialOutput
+    });
+
+    const repositoryPath = this.options.defaultRepositoryPath ?? process.cwd();
+    const plannedWorktree = planWorktree({
+      projectName: goal.projectName,
+      repositoryPath,
+      worktreeRoot: this.options.worktreeRoot ?? join(repositoryPath, ".worktrees"),
+      goalTitle: goal.title,
+      workerSessionId: session.id
+    });
+    await this.options.store.createWorktreeAssignment({
+      workerSessionId: session.id,
+      repositoryPath,
+      worktreePath: plannedWorktree.path,
+      branchName: plannedWorktree.branchName
     });
 
     await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);

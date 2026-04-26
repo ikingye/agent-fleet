@@ -35,6 +35,8 @@ describe("API routes", () => {
       statePath: join(dir, "state.json"),
       workerCommand: "codexyoloproxy",
       defaultWorkerCwd: "/worktrees/agent-fleet",
+      defaultRepositoryPath: "/repo/agent-fleet",
+      worktreeRoot: "/repo/agent-fleet/.worktrees",
       workerAdapter: fakeWorkerAdapter
     });
 
@@ -63,6 +65,13 @@ describe("API routes", () => {
       expect(dashboard.workerSessions[0]).toMatchObject({
         command: "codexyoloproxy",
         status: "running"
+      });
+      expect(dashboard.worktreeAssignments[0]).toMatchObject({
+        workerSessionId: dashboard.workerSessions[0].id,
+        repositoryPath: "/repo/agent-fleet",
+        worktreePath: `/repo/agent-fleet/.worktrees/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
+        branchName: `agent-fleet/${dashboard.workerSessions[0].id}-bootstrap-agent-fleet`,
+        status: "planned"
       });
     } finally {
       await app.close();

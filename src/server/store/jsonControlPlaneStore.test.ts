@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { JsonControlPlaneStore } from "./jsonControlPlaneStore.js";
 
 describe("JsonControlPlaneStore", () => {
-  it("persists goals, Steward decisions, Worker sessions, corrections, and memory", async () => {
+  it("persists goals, Steward decisions, Worker sessions, worktree assignments, corrections, and memory", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
     const statePath = join(dir, "state.json");
 
@@ -39,6 +39,12 @@ describe("JsonControlPlaneStore", () => {
         resumeId: "resume-123",
         status: "running"
       });
+      const assignment = await store.createWorktreeAssignment({
+        workerSessionId: worker.id,
+        repositoryPath: "/repo/agent-fleet",
+        worktreePath: "/repo/agent-fleet/.worktrees/worker-123-bootstrap-control-plane",
+        branchName: "agent-fleet/worker-123-bootstrap-control-plane"
+      });
       await store.addCorrection({
         decisionId: decision.id,
         body: "Prefer Steward Agent and Worker Agent naming.",
@@ -70,6 +76,14 @@ describe("JsonControlPlaneStore", () => {
         command: "codexyoloproxy",
         resumeId: "resume-123",
         status: "running"
+      });
+      expect(dashboard.worktreeAssignments[0]).toMatchObject({
+        id: assignment.id,
+        workerSessionId: worker.id,
+        repositoryPath: "/repo/agent-fleet",
+        worktreePath: "/repo/agent-fleet/.worktrees/worker-123-bootstrap-control-plane",
+        branchName: "agent-fleet/worker-123-bootstrap-control-plane",
+        status: "planned"
       });
       expect(dashboard.corrections[0]).toMatchObject({
         decisionId: decision.id,

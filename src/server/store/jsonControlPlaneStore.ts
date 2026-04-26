@@ -14,6 +14,7 @@ import type {
   MemoryScope,
   StewardDecision,
   WorkerKind,
+  WorktreeAssignment,
   WorkerSession,
   WorkerSessionStatus
 } from "../../shared/types.js";
@@ -52,6 +53,13 @@ export interface CreateWorkerSessionInput {
   resumeId: string | null;
   status: WorkerSessionStatus;
   lastOutput?: string;
+}
+
+export interface CreateWorktreeAssignmentInput {
+  workerSessionId: string;
+  repositoryPath: string;
+  worktreePath: string;
+  branchName: string;
 }
 
 export interface AddCorrectionInput {
@@ -264,6 +272,39 @@ export class JsonControlPlaneStore {
     return session;
   }
 
+  async createWorktreeAssignment(input: CreateWorktreeAssignmentInput): Promise<WorktreeAssignment> {
+    const session = this.findWorkerSession(input.workerSessionId);
+    const timestamp = now();
+    const assignment: WorktreeAssignment = {
+      id: randomUUID(),
+      workerSessionId: input.workerSessionId,
+      repositoryPath: input.repositoryPath,
+      worktreePath: input.worktreePath,
+      branchName: input.branchName,
+      status: "planned",
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.state.worktreeAssignments.push(assignment);
+    this.addEvent({
+      type: "worktree.planned",
+      goalId: session.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: session.id,
+      message: `Worktree planned: ${assignment.branchName}`,
+      metadata: {
+        repositoryPath: assignment.repositoryPath,
+        worktreePath: assignment.worktreePath,
+        branchName: assignment.branchName,
+        status: assignment.status
+      }
+    });
+    await this.save();
+
+    return assignment;
+  }
+
   async addCorrection(input: AddCorrectionInput): Promise<DecisionCorrection> {
     const decision = this.findDecision(input.decisionId);
     decision.status = "corrected";
@@ -356,6 +397,15 @@ export class JsonControlPlaneStore {
     }
 
     return decision;
+  }
+
+  private findWorkerSession(workerSessionId: string): WorkerSession {
+    const session = this.state.workerSessions.find((item) => item.id === workerSessionId);
+    if (session === undefined) {
+      throw new Error(`Worker session not found: ${workerSessionId}`);
+    }
+
+    return session;
   }
 
   private addEvent(input: {
