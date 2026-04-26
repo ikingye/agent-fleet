@@ -891,7 +891,7 @@ describe("API routes", () => {
     }
   });
 
-  it("runs autonomy reconcile and records an auditable checkpoint without dispatching Workers", async () => {
+  it("runs an autonomy tick and records an auditable checkpoint without dispatching duplicate Workers", async () => {
     let starts = 0;
     const app = await createApp({
       statePath: join(dir, "state.json"),
@@ -942,18 +942,20 @@ describe("API routes", () => {
 
       expect(autonomyResponse.statusCode).toBe(200);
       expect(starts).toBe(1);
-      expect(body.result).toEqual({
+      expect(body.result).toMatchObject({
         checked: 1,
         updated: 1,
-        staleSessionIds: [before.workerSessions[0].id],
-        runningSessionIds: []
+        decisionsRecorded: 0,
+        handoffsQueued: 0,
+        ownerReviewNeeded: 0
       });
       expect(body.checkpoint).toMatchObject({
         reason: "manual",
-        summary: "Autonomy reconcile checked 1 Worker session and updated 1.",
+        summary: "Autonomy tick checked 1 Worker session, updated 1, recorded 0 decisions, queued 0 handoffs, flagged 0 owner reviews.",
         goalIds: [before.goals[0].id],
         workerSessionIds: [before.workerSessions[0].id]
       });
+      expect(body.checkpoint.nextAction).toContain("Resume paused Worker session");
       expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject(body.checkpoint);
       expect(dashboard.workerSessions[0]).toMatchObject({
         status: "paused",
