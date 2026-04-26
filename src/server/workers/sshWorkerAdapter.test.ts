@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ChildProcessSshWorkerRunner,
@@ -54,7 +57,10 @@ describe("buildSshWorkerCommand", () => {
       workerCommand: "true"
     });
 
-    expect(built.args.at(-1)).toContain('wait "$agent_fleet_worker_pid"; }');
+    expect(built.args.at(-1)).toContain('cat > "$agent_fleet_prompt_file"');
+    expect(built.args.at(-1)).toContain('< "$agent_fleet_prompt_file" &');
+    expect(built.args.at(-1)).toContain('wait "$agent_fleet_worker_pid"');
+    expect(built.args.at(-1)).toContain('rm -f "$agent_fleet_prompt_file"');
 
     const syntaxCheck = spawnSync("sh", ["-c", built.remoteCommand], {
       encoding: "utf8"
@@ -176,6 +182,49 @@ describe("RemoteSshWorkerAdapter", () => {
 });
 
 describe("ChildProcessSshWorkerRunner", () => {
+  it("feeds stdin to a backgrounded Worker while still parsing the remote pid marker", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "agent-fleet-ssh-worker-"));
+    const previousTmpDir = process.env.TMPDIR;
+    const built = buildSshWorkerCommand({
+      sshHost: "worker@example.com",
+      cwd: tempDir,
+      workerCommand: process.execPath,
+      workerArgs: [
+        "-e",
+        [
+          "let data = '';",
+          "process.stdin.setEncoding('utf8');",
+          "process.stdin.on('data', (chunk) => { data += chunk; });",
+          "process.stdin.on('end', () => { console.log('worker stdin: ' + data); });"
+        ].join("")
+      ]
+    });
+
+    try {
+      process.env.TMPDIR = tempDir;
+
+      const result = await new ChildProcessSshWorkerRunner().run({
+        command: "sh",
+        args: ["-c", built.remoteCommand],
+        stdin: "Prompt from Steward stdin.\nSecond line.",
+        startupTimeoutMs: 2000
+      });
+
+      expect(result.status).toBe("completed");
+      expect(result.pid).toEqual(expect.any(Number));
+      expect(result.output).toMatch(/agent-fleet remote pid: \d+/);
+      expect(result.output).toContain("worker stdin: Prompt from Steward stdin.\nSecond line.");
+      expect(readdirSync(tempDir).filter((entry) => entry.startsWith("agent-fleet-worker-stdin."))).toEqual([]);
+    } finally {
+      if (previousTmpDir === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = previousTmpDir;
+      }
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports the remote Worker pid marker instead of the local ssh client pid", async () => {
     const result = await new ChildProcessSshWorkerRunner().run({
       command: process.execPath,
