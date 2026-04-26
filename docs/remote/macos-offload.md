@@ -156,7 +156,19 @@ When a goal is accepted:
 - Remote Worker commands receive proxy environment variables when the selected node has `proxyUrl` set.
 - Remote-dispatched Worker Names include the `remote` marker before the timestamp: `<project-name>-<worker-purpose>-remote-<YYYYMMDDHHmm>`. Local Worker Names remain `<project-name>-<worker-purpose>-<YYYYMMDDHHmm>`. The Steward puts the Worker Name at the top of the Worker prompt and repeats it in dispatch audit records.
 
-Workspace sync is not implemented yet. Until it is, a remote Worker can only succeed when the expected source checkout already exists or the Worker command itself can create/sync it from git. This is the remaining blocker before treating the remote pool as fully disposable compute.
+## Remote Workspace Provisioning
+
+Before launching an SSH-backed Worker, the Steward conservatively prepares the selected remote cwd:
+
+- It always attempts to create the remote cwd with `mkdir -p`.
+- If the submitted local `workspacePath` is inside a git repository with `remote.origin.url`, it asks the remote host to prepare that cwd from git by clone, fetch, and checkout.
+- If the remote cwd already contains a git checkout, provisioning fetches from origin and checks out the local branch/commit.
+- If the remote cwd exists but is non-empty and is not a git checkout, provisioning blocks instead of deleting or overwriting it.
+- If the local workspace is not in git or has no origin URL, provisioning records a clear blocked Worker session/checkpoint instead of pretending that the remote cwd is usable.
+
+The MVP intentionally does not rsync project directories, push commits, copy local uncommitted changes, copy secrets, or clean remote disks. Remote `workRoot` is scratch/cache only. Durable project state remains in git and durable control-plane records.
+
+Owner-facing audit records include whether provisioning prepared the remote workspace or blocked Worker launch. When blocked, the Worker session is recorded as failed with command `remote workspace provisioning`, and the checkpoint explains what must be fixed, such as adding a git origin or preparing remote authentication.
 
 ## Readiness Model
 

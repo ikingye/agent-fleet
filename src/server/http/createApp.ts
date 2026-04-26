@@ -3,6 +3,10 @@ import fastify from "fastify";
 import { join } from "node:path";
 import type { DashboardData, ExecutionNode, StewardCheckpointReason, WorkerSessionStatus } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
+import {
+  GitRemoteWorkspaceProvisioner,
+  type RemoteWorkspaceProvisioner
+} from "../remote/remoteWorkspaceProvisioner.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
 import {
@@ -30,6 +34,7 @@ export interface CreateAppOptions {
   worktreeRunner?: MaterializeWorktreeRunner;
   workerAdapter?: WorkerAdapter;
   remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
+  remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
   remoteSshWorkerRunner?: SshWorkerProcessRunner;
   workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
 }
@@ -268,6 +273,7 @@ export async function createApp(options: CreateAppOptions = {}) {
           proxyEnv: buildRemoteProxyEnv(node.proxyUrl),
           runner: options.remoteSshWorkerRunner
         })),
+    remoteWorkspaceProvisioner: options.remoteWorkspaceProvisioner ?? new GitRemoteWorkspaceProvisioner(),
     defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd(),
     defaultRepositoryPath,
     worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees"),

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./createApp.js";
+import type { RemoteWorkspaceProvisioner } from "../remote/remoteWorkspaceProvisioner.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 import type { SshWorkerProcessInput, SshWorkerProcessResult, SshWorkerProcessRunner } from "../workers/sshWorkerAdapter.js";
 
@@ -30,6 +31,16 @@ class CapturingSshRunner implements SshWorkerProcessRunner {
     return this.result;
   }
 }
+
+const preparedRemoteWorkspaceProvisioner: RemoteWorkspaceProvisioner = {
+  async provision() {
+    return {
+      status: "prepared",
+      summary: "Remote workspace prepared by test provisioner.",
+      actions: ["Ensured remote cwd exists"]
+    };
+  }
+};
 
 describe("API routes", () => {
   let dir: string;
@@ -795,6 +806,7 @@ describe("API routes", () => {
       workerCommand: "fake-remote-worker",
       workerArgs: ["--safe-smoke"],
       defaultWorkerCwd: "/worktrees/agent-fleet",
+      remoteWorkspaceProvisioner: preparedRemoteWorkspaceProvisioner,
       remoteSshWorkerRunner: sshRunner
     });
 

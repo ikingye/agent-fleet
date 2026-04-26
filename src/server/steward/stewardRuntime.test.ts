@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import type { MaterializeWorktreeRunner } from "../worktrees/worktreeManager.js";
+import type {
+  RemoteWorkspaceProvisioner,
+  RemoteWorkspaceProvisionResult
+} from "../remote/remoteWorkspaceProvisioner.js";
 import { StewardRuntime } from "./stewardRuntime.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
@@ -37,7 +41,13 @@ class FakeWorkerAdapter implements WorkerAdapter {
   readonly kind = "codex";
   readonly startInputs: Array<{ goalTitle: string; prompt: string; cwd: string }> = [];
 
+  constructor(
+    private readonly events?: string[],
+    private readonly eventName = "worker-start"
+  ) {}
+
   async start(input: { goalTitle: string; prompt: string; cwd: string }) {
+    this.events?.push(this.eventName);
     this.startInputs.push(input);
 
     return {
@@ -51,7 +61,167 @@ class FakeWorkerAdapter implements WorkerAdapter {
   }
 }
 
+class FakeRemoteWorkspaceProvisioner implements RemoteWorkspaceProvisioner {
+  readonly inputs: Parameters<RemoteWorkspaceProvisioner["provision"]>[0][] = [];
+
+  constructor(
+    private readonly result: RemoteWorkspaceProvisionResult,
+    private readonly events?: string[]
+  ) {}
+
+  async provision(input: Parameters<RemoteWorkspaceProvisioner["provision"]>[0]): Promise<RemoteWorkspaceProvisionResult> {
+    this.events?.push("provision");
+    this.inputs.push(input);
+    return this.result;
+  }
+}
+
 describe("StewardRuntime", () => {
+  it("provisions the remote workspace before starting a remote Worker and audits success", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const events: string[] = [];
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter(events, "remote-start");
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "prepared",
+      summary: "Remote workspace prepared from git origin.",
+      actions: ["Ensured remote cwd exists", "Fetched git origin"]
+    }, events);
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const remoteNode = await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter,
+        remoteWorkspaceProvisioner: provisioner
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run high CPU build",
+        body: "Run high CPU tests on remote capacity."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(provisioner.inputs).toHaveLength(1);
+      expect(events).toEqual(["provision", "remote-start"]);
+      expect(provisioner.inputs[0]).toMatchObject({
+        node: remoteNode,
+        localWorkspacePath: "/projects/agent-fleet",
+        remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/agent-fleet"
+      });
+      expect(remoteAdapter.startInputs).toHaveLength(1);
+      expect(remoteAdapter.startInputs[0].cwd).toBe("/srv/agent-fleet/agent-fleet/agent-fleet");
+      expect(dashboard.decisions[0].actionsJson).toContain("Provision remote scratch workspace before Worker launch");
+      expect(dashboard.stewardCheckpoints[0].nextAction).toContain("Remote workspace prepared from git origin.");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks remote dispatch when workspace provisioning fails before Worker start", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter();
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "blocked",
+      summary: "Remote workspace blocked: local workspace has no git origin.",
+      actions: ["Ensured remote cwd exists", "No git origin available"]
+    });
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const remoteNode = await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter,
+        remoteWorkspaceProvisioner: provisioner
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run high CPU build",
+        body: "Run high CPU tests on remote capacity."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(goal.status).toBe("blocked");
+      expect(provisioner.inputs).toHaveLength(1);
+      expect(localAdapter.startInputs).toHaveLength(0);
+      expect(remoteAdapter.startInputs).toHaveLength(0);
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: remoteNode.id,
+        command: "remote workspace provisioning",
+        cwd: "/srv/agent-fleet/agent-fleet/agent-fleet",
+        status: "failed",
+        lastOutput: "Remote workspace blocked: local workspace has no git origin."
+      });
+      expect(dashboard.stewardCheckpoints[0]).toMatchObject({
+        reason: "dispatch",
+        summary: "Remote workspace provisioning blocked Worker launch for goal: Run high CPU build"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not provision a remote workspace for local dispatch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "prepared",
+      summary: "Should not be used.",
+      actions: []
+    });
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkspaceProvisioner: provisioner
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Fix copy typo",
+        body: "Update one sentence in the docs."
+      });
+
+      expect(provisioner.inputs).toHaveLength(0);
+      expect(localAdapter.startInputs).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("dispatches high CPU and long-running goals to a ready remote execution node", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
     const localAdapter = new FakeWorkerAdapter();

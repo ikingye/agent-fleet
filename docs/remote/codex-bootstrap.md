@@ -1,6 +1,6 @@
 # Remote Codex Bootstrap
 
-Remote Codex Workers run on disposable compute nodes. Treat the remote host as a replaceable executor: install runtime tools, authenticate Codex explicitly, sync or create the requested workspace, run the Worker, and keep durable state in agent-fleet plus git.
+Remote Codex Workers run on disposable compute nodes. Treat the remote host as a replaceable executor: install runtime tools, authenticate Codex explicitly, let agent-fleet prepare a scratch workspace from git, run the Worker, and keep durable state in agent-fleet plus git.
 
 ## Readiness Probe
 
@@ -145,6 +145,19 @@ NO_PROXY=localhost,127.0.0.1
 
 Use the domain-aware proxy policy for higher-level routing decisions. Direct-capable mainland traffic should not be forced through the forwarded proxy by default.
 
+## Workspace Provisioning
+
+agent-fleet prepares remote workspaces conservatively before launching Codex:
+
+- The remote cwd is created if missing.
+- Git is the preferred sync mechanism. The local target workspace must be inside a git repository with `remote.origin.url`.
+- The remote checkout is scratch/cache. Do not rely on unpushed remote files as durable state.
+- Local uncommitted files are not copied, and agent-fleet does not push commits.
+- Codex auth, API keys, SSH keys, and other secrets are not copied as part of workspace provisioning.
+- Non-empty remote directories that are not git checkouts block provisioning instead of being deleted.
+
+If provisioning blocks, fix the source-of-truth issue first: add a git origin, push required commits, authenticate the remote host to fetch that origin, or choose a local Worker for work that depends on uncommitted local state.
+
 ## Current `aicp-hhht-231` Probe
 
 As of 2026-04-26:
@@ -162,4 +175,4 @@ As of 2026-04-26:
 - `https://www.baidu.com` responds directly.
 - `nvidia-smi` is not installed.
 
-The remaining blocker for real remote Codex dispatch is authentication, followed by workspace sync/materialization for the requested `workspacePath`.
+The remaining blocker for real remote Codex dispatch on this node is authentication. Workspace provisioning now expects the target workspace to be fetchable from git.

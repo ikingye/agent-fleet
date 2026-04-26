@@ -1,6 +1,7 @@
 import { join, posix } from "node:path";
 import type { Goal, DecisionCorrection, ExecutionNode } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
+import type { RemoteWorkspaceProvisioner, RemoteWorkspaceProvisionResult } from "../remote/remoteWorkspaceProvisioner.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import {
   materializeWorktree,
@@ -15,6 +16,7 @@ export interface StewardRuntimeOptions {
   store: JsonControlPlaneStore;
   workerAdapter: WorkerAdapter;
   remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
+  remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
   defaultWorkerCwd: string;
   defaultRepositoryPath?: string;
   worktreeRoot?: string;
@@ -66,6 +68,7 @@ export class StewardRuntime {
         "Create an auditable Steward decision",
         `Worker Name: ${placement.workerName}`,
         ...buildPlacementActions(placement),
+        ...(placement.hostId === null ? [] : ["Provision remote scratch workspace before Worker launch"]),
         "Start a Worker Agent session",
         "Track resume metadata for recovery"
       ]
@@ -82,6 +85,40 @@ export class StewardRuntime {
       });
       await materializeWorktree(plannedWorktree, this.options.worktreeRunner);
       workerCwd = plannedWorktree.path;
+    }
+
+    const provisionResult = await this.provisionRemoteWorkspaceIfNeeded(placement, input.workspacePath);
+
+    if (provisionResult?.status === "blocked") {
+      const session = await this.options.store.createWorkerSession({
+        goalId: goal.id,
+        decisionId: decision.id,
+        kind: placement.adapter.kind,
+        command: "remote workspace provisioning",
+        cwd: placement.cwd,
+        pid: null,
+        hostId: placement.hostId,
+        resumeId: null,
+        status: "failed",
+        lastOutput: provisionResult.summary
+      });
+      await this.options.store.createWorktreeAssignment({
+        workerSessionId: session.id,
+        repositoryPath,
+        worktreePath: placement.worktreePath,
+        branchName: `remote/${session.id}-${slugify(goal.title)}`
+      });
+      await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
+      const updatedGoal = await this.options.store.updateGoalStatus(goal.id, "blocked");
+      await this.options.store.recordStewardCheckpoint({
+        reason: "dispatch",
+        summary: `Remote workspace provisioning blocked Worker launch for goal: ${goal.title}`,
+        nextAction: provisionResult.summary,
+        goalIds: [goal.id],
+        workerSessionIds: [session.id]
+      });
+
+      return updatedGoal;
     }
 
     const workerResult = await placement.adapter.start({
@@ -142,7 +179,8 @@ export class StewardRuntime {
         workerResult.command,
         workerResult.resumeId,
         workerResult.status,
-        workerResult.initialOutput
+        workerResult.initialOutput,
+        provisionResult
       ),
       goalIds: [goal.id],
       workerSessionIds: [session.id]
@@ -235,6 +273,32 @@ export class StewardRuntime {
     });
 
     return candidates[0].node;
+  }
+
+  private async provisionRemoteWorkspaceIfNeeded(
+    placement: WorkerPlacement,
+    workspacePath: string
+  ): Promise<RemoteWorkspaceProvisionResult | null> {
+    if (placement.hostId === null || this.options.remoteWorkspaceProvisioner === undefined) {
+      return null;
+    }
+
+    const dashboard = await this.options.store.dashboard();
+    const node = dashboard.executionNodes.find((item) => item.id === placement.hostId);
+
+    if (node === undefined) {
+      return {
+        status: "blocked",
+        summary: `Remote workspace blocked: selected execution node ${placement.hostId} is no longer registered.`,
+        actions: ["Skipped Worker launch because selected remote node was missing"]
+      };
+    }
+
+    return this.options.remoteWorkspaceProvisioner.provision({
+      node,
+      localWorkspacePath: workspacePath,
+      remoteWorkspacePath: placement.cwd
+    });
   }
 
   async correctDecision(input: CorrectDecisionInput): Promise<DecisionCorrection> {
@@ -418,7 +482,8 @@ function buildDispatchNextAction(
   command: string,
   resumeId: string | null,
   status: "running" | "completed" | "failed",
-  initialOutput: string
+  initialOutput: string,
+  provisionResult: RemoteWorkspaceProvisionResult | null
 ): string {
   if (status === "failed") {
     const output = summarizeWorkerOutput(initialOutput);
@@ -437,10 +502,24 @@ function buildDispatchNextAction(
   });
 
   if (resumeCommand === null) {
-    return `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted. Worker Name: ${workerName}.`;
+    return appendProvisionSummary(
+      `Monitor Worker session ${workerSessionId}; no resume id is available yet, so recover from durable state if the Steward session is interrupted. Worker Name: ${workerName}.`,
+      provisionResult
+    );
   }
 
-  return `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted. Worker Name: ${workerName}.`;
+  return appendProvisionSummary(
+    `Monitor Worker session ${workerSessionId}; resume with ${resumeCommand} if the Steward session is interrupted. Worker Name: ${workerName}.`,
+    provisionResult
+  );
+}
+
+function appendProvisionSummary(nextAction: string, provisionResult: RemoteWorkspaceProvisionResult | null): string {
+  if (provisionResult === null) {
+    return nextAction;
+  }
+
+  return `${nextAction} Remote workspace provisioning: ${provisionResult.summary}`;
 }
 
 function summarizeWorkerOutput(output: string): string {
