@@ -1,4 +1,4 @@
-import type { DashboardData, WorkerSession, WorkerSessionStatus } from "../../shared/types.js";
+import type { DashboardData, GoalStatus, WorkerSession, WorkerSessionStatus } from "../../shared/types.js";
 
 export type WorkerProcessObservation =
   | {
@@ -21,6 +21,7 @@ export interface SupervisorReconcileInput {
   dashboard: DashboardData;
   probeProcess(session: WorkerSession): Promise<WorkerProcessObservation>;
   updateWorkerSessionStatus(input: WorkerSessionStatusUpdate): Promise<WorkerSession>;
+  updateGoalStatus?(goalId: string, status: GoalStatus): Promise<unknown>;
 }
 
 export interface SupervisorReconcileResult {
@@ -62,11 +63,26 @@ export async function reconcileWorkerSessions(input: SupervisorReconcileInput): 
       continue;
     }
 
-    await input.updateWorkerSessionStatus(update);
+    const updatedSession = await input.updateWorkerSessionStatus(update);
+    if (input.updateGoalStatus !== undefined) {
+      await input.updateGoalStatus(updatedSession.goalId, goalStatusForWorkerSessionStatus(updatedSession.status));
+    }
     result.updated += 1;
   }
 
   return result;
+}
+
+function goalStatusForWorkerSessionStatus(status: WorkerSessionStatus): GoalStatus {
+  if (status === "completed") {
+    return "completed";
+  }
+
+  if (status === "starting" || status === "running") {
+    return "running";
+  }
+
+  return "blocked";
 }
 
 export async function probeLocalWorkerProcess(session: WorkerSession): Promise<WorkerProcessObservation> {

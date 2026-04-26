@@ -710,12 +710,27 @@ describe("API routes", () => {
         resumeId: null,
         lastOutput: "pid 4343 is no longer running"
       });
+      expect(dashboard.goals[0]).toMatchObject({ status: "blocked" });
+      expect(dashboard.goals[1]).toMatchObject({ status: "blocked" });
 
       const recovery = (await app.inject({ method: "GET", url: "/api/recovery" })).json();
+      expect(recovery.activeGoals).toEqual([
+        expect.objectContaining({ id: dashboard.goals[0].id, status: "blocked" }),
+        expect.objectContaining({ id: dashboard.goals[1].id, status: "blocked" })
+      ]);
       expect(recovery.activeWorkerSessions[0]).toMatchObject({
         status: "paused",
         resumeCommand: "codex exec --json --sandbox workspace-write resume resume-reconcile"
       });
+      expect(recovery.lastCheckpoint).toMatchObject({
+        reason: "recovery",
+        summary: "Recovery reconcile checked 2 Worker sessions and updated 2.",
+        goalIds: [dashboard.goals[0].id, dashboard.goals[1].id],
+        workerSessionIds: [dashboard.workerSessions[0].id, dashboard.workerSessions[1].id]
+      });
+      expect(recovery.nextActions[0]).toBe(
+        `Checkpoint: Review stale Worker sessions: ${dashboard.workerSessions[0].id}, ${dashboard.workerSessions[1].id}. Related goals were updated for owner recovery.`
+      );
     } finally {
       await app.close();
     }
@@ -789,6 +804,88 @@ describe("API routes", () => {
         resumeId: "remote-reconcile",
         lastOutput: "remote pid 7777 is no longer running on aicp-hhht-231"
       });
+      expect(dashboard.goals[0]).toMatchObject({ status: "blocked" });
+
+      const recovery = (await app.inject({ method: "GET", url: "/api/recovery" })).json();
+      expect(recovery.activeGoals[0]).toMatchObject({
+        id: dashboard.goals[0].id,
+        status: "blocked"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("reconciles a remote Worker without a resume id to failed and blocks the goal", async () => {
+    const sshRunner = new CapturingSshRunner({
+      status: "running",
+      output: "accepted remote goal\nagent-fleet remote pid: 8888\n",
+      pid: 8888
+    });
+    const remoteRunner = new CapturingRemoteCommandRunner({ exitCode: 1, stdout: "", stderr: "" });
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "fake-remote-worker",
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      remoteWorkspaceProvisioner: preparedRemoteWorkspaceProvisioner,
+      remoteSshWorkerRunner: sshRunner,
+      remoteCommandRunner: remoteRunner
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-232",
+          kind: "remote",
+          status: "ready",
+          sshHost: "aicp-hhht-232",
+          workRoot: "/root/agent-fleet-workspaces",
+          proxyUrl: null,
+          tags: ["remote", "linux", "high-cpu"]
+        }
+      });
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Remote non resumable reconcile",
+          body: "Run this high CPU Worker remotely, then reconcile a failed terminal state."
+        }
+      });
+      const before = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      const reconcileResponse = await app.inject({
+        method: "POST",
+        url: "/api/recovery/reconcile"
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(reconcileResponse.statusCode).toBe(200);
+      expect(reconcileResponse.json()).toEqual({
+        checked: 1,
+        updated: 1,
+        staleSessionIds: [before.workerSessions[0].id],
+        runningSessionIds: []
+      });
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: before.executionNodes[0].id,
+        pid: 8888,
+        status: "failed",
+        resumeId: null,
+        lastOutput: "remote pid 8888 is no longer running on aicp-hhht-232"
+      });
+      expect(dashboard.goals[0]).toMatchObject({ status: "blocked" });
+
+      const recovery = (await app.inject({ method: "GET", url: "/api/recovery" })).json();
+      expect(recovery.activeGoals[0]).toMatchObject({
+        id: dashboard.goals[0].id,
+        status: "blocked"
+      });
+      expect(recovery.activeWorkerSessions).toEqual([]);
     } finally {
       await app.close();
     }
