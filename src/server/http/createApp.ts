@@ -12,6 +12,7 @@ import { probeRemoteWorkerPid } from "../remote/remoteWorkerProbe.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
 import { createDashboardWorkerProcessProbe } from "../steward/remoteSupervisorRuntime.js";
+import { runStewardAutonomyTick } from "../steward/stewardAutonomyRuntime.js";
 import { StewardMessageLoop } from "../steward/stewardMessageLoop.js";
 import {
   probeLocalWorkerProcess,
@@ -288,33 +289,10 @@ export async function createApp(options: CreateAppOptions = {}) {
   });
 
   app.post("/api/steward/autonomy/run", async () => {
-    const dashboard = await store.dashboard();
-    const supervisedSessions = dashboard.workerSessions.filter(
-      (session) => session.status === "starting" || session.status === "running"
-    );
-    const result = await reconcileWorkerSessions({
-      dashboard,
-      probeProcess: buildWorkerProcessProbe(dashboard, options),
-      updateWorkerSessionStatus(input) {
-        return store.updateWorkerSessionStatus(input);
-      },
-      updateGoalStatus(goalId, status) {
-        return store.updateGoalStatus(goalId, status);
-      }
+    return runStewardAutonomyTick({
+      store,
+      probeProcess: buildWorkerProcessProbe(await store.dashboard(), options)
     });
-    const checkedLabel = result.checked === 1 ? "Worker session" : "Worker sessions";
-    const checkpoint = await store.recordStewardCheckpoint({
-      reason: "manual",
-      summary: `Autonomy reconcile checked ${result.checked} ${checkedLabel} and updated ${result.updated}.`,
-      nextAction:
-        result.staleSessionIds.length === 0
-          ? "Continue monitoring Worker sessions; no new Worker Agent was dispatched."
-          : `Review stale Worker sessions: ${result.staleSessionIds.join(", ")}. No new Worker Agent was dispatched.`,
-      goalIds: uniqueStrings(supervisedSessions.map((session) => session.goalId)),
-      workerSessionIds: supervisedSessions.map((session) => session.id)
-    });
-
-    return { result, checkpoint };
   });
 
   app.post("/api/goals", async (request) => {
