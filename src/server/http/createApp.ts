@@ -25,6 +25,7 @@ import { probeRemoteWorkerPid } from "../remote/remoteWorkerProbe.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
 import { createDashboardWorkerProcessProbe } from "../steward/remoteSupervisorRuntime.js";
+import { maintainGithubDeployKeyLeases } from "../steward/githubDeployKeyLeaseMaintenance.js";
 import { runStewardAutonomyTick } from "../steward/stewardAutonomyRuntime.js";
 import { StewardMessageLoop } from "../steward/stewardMessageLoop.js";
 import {
@@ -55,6 +56,7 @@ export interface CreateAppOptions {
   remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
   githubDeployKeyLeaseResolver?: GithubDeployKeyLeaseResolver;
   remoteGithubDeployKeyProvisioner?: RemoteGithubDeployKeyProvisioner;
+  githubDeployKeyLeaseTtlMs?: number;
   remoteSshWorkerRunner?: SshWorkerProcessRunner;
   remoteCommandRunner?: RemoteCommandRunner;
   workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
@@ -275,6 +277,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     options.workerAdapter ?? new CommandWorkerAdapter(workerCommand, workerArgs);
   const defaultRepositoryPath = options.defaultRepositoryPath ?? process.cwd();
   const materializeWorktrees = options.materializeWorktrees ?? process.env.AGENT_FLEET_MATERIALIZE_WORKTREES === "true";
+  const remoteGithubDeployKeyProvisioner = options.remoteGithubDeployKeyProvisioner ?? new RemoteGithubDeployKeyProvisioner();
   const steward = new StewardRuntime({
     store,
     workerAdapter,
@@ -290,7 +293,8 @@ export async function createApp(options: CreateAppOptions = {}) {
         })),
     remoteWorkspaceProvisioner: options.remoteWorkspaceProvisioner ?? new GitRemoteWorkspaceProvisioner(),
     githubDeployKeyLeaseResolver: options.githubDeployKeyLeaseResolver ?? new LocalGithubDeployKeyLeaseResolver(),
-    remoteGithubDeployKeyProvisioner: options.remoteGithubDeployKeyProvisioner ?? new RemoteGithubDeployKeyProvisioner(),
+    remoteGithubDeployKeyProvisioner,
+    githubDeployKeyLeaseTtlMs: options.githubDeployKeyLeaseTtlMs,
     defaultWorkerCwd: options.defaultWorkerCwd ?? process.cwd(),
     defaultRepositoryPath,
     worktreeRoot: options.worktreeRoot ?? join(defaultRepositoryPath, ".worktrees"),
@@ -345,6 +349,11 @@ export async function createApp(options: CreateAppOptions = {}) {
         workerSessionIds: supervisedSessions.map((session) => session.id)
       });
     }
+    await maintainGithubDeployKeyLeases({
+      store,
+      leaseTtlMs: options.githubDeployKeyLeaseTtlMs,
+      remoteGithubDeployKeyProvisioner
+    });
 
     return result;
   });
@@ -352,7 +361,9 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.post("/api/steward/autonomy/run", async () => {
     return runStewardAutonomyTick({
       store,
-      probeProcess: buildWorkerProcessProbe(await store.dashboard(), options)
+      probeProcess: buildWorkerProcessProbe(await store.dashboard(), options),
+      githubDeployKeyLeaseTtlMs: options.githubDeployKeyLeaseTtlMs,
+      remoteGithubDeployKeyProvisioner
     });
   });
 
