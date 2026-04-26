@@ -28,7 +28,9 @@ describe("parseWorkerFinalReport", () => {
       "- Review the parsed report before merging.",
       "",
       "Needs owner review: yes",
-      "Resume id: resume-worker-report-123"
+      "Resume id: resume-worker-report-123",
+      "Returned ref: refs/heads/agent-fleet/results/agent-fleet-worker-report-ingestion-202604262151",
+      "Returned SHA: 0123456789abcdef0123456789abcdef01234567"
     ].join("\n"), { expectedWorkerName: workerName });
 
     expect(report).toEqual({
@@ -43,6 +45,8 @@ describe("parseWorkerFinalReport", () => {
       nextActions: ["Review the parsed report before merging."],
       needsOwnerReview: true,
       resumeId: "resume-worker-report-123",
+      returnedRef: "refs/heads/agent-fleet/results/agent-fleet-worker-report-ingestion-202604262151",
+      returnedSha: "0123456789abcdef0123456789abcdef01234567",
       markdown: [
         "# agent-fleet-worker-report-ingestion-202604262151",
         "",
@@ -66,7 +70,9 @@ describe("parseWorkerFinalReport", () => {
         "- Review the parsed report before merging.",
         "",
         "Needs owner review: yes",
-        "Resume id: resume-worker-report-123"
+        "Resume id: resume-worker-report-123",
+        "Returned ref: refs/heads/agent-fleet/results/agent-fleet-worker-report-ingestion-202604262151",
+        "Returned SHA: 0123456789abcdef0123456789abcdef01234567"
       ].join("\n")
     });
   });

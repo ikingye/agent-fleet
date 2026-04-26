@@ -14,7 +14,9 @@ type SectionName =
   | "blockers"
   | "nextActions"
   | "needsOwnerReview"
-  | "resumeId";
+  | "resumeId"
+  | "returnedRef"
+  | "returnedSha";
 
 const sectionNames = new Map<string, SectionName>([
   ["status", "status"],
@@ -30,7 +32,11 @@ const sectionNames = new Map<string, SectionName>([
   ["needs owner review", "needsOwnerReview"],
   ["owner review", "needsOwnerReview"],
   ["resume id", "resumeId"],
-  ["resume", "resumeId"]
+  ["resume", "resumeId"],
+  ["returned ref", "returnedRef"],
+  ["return ref", "returnedRef"],
+  ["returned sha", "returnedSha"],
+  ["return sha", "returnedSha"]
 ]);
 
 const listSections = new Set<SectionName>(["changedFiles", "verification", "decisions", "blockers", "nextActions"]);
@@ -95,7 +101,9 @@ export function parseWorkerFinalReport(
         decisions: normalizeList(report.decisions),
         blockers: normalizeList(report.blockers),
         nextActions: normalizeList(report.nextActions),
-        resumeId: normalizeScalar(report.resumeId)
+        resumeId: normalizeScalar(report.resumeId),
+        returnedRef: normalizeScalar(report.returnedRef),
+        returnedSha: normalizeScalar(report.returnedSha)
       };
 }
 
@@ -113,6 +121,8 @@ function emptyReport(markdown: string): DraftReport {
     nextActions: [],
     needsOwnerReview: false,
     resumeId: null,
+    returnedRef: null,
+    returnedSha: null,
     markdown
   };
 }
@@ -202,6 +212,16 @@ function applySectionValue(report: DraftReport, section: SectionName, rawValue: 
     return;
   }
 
+  if (section === "returnedRef") {
+    report.returnedRef = value;
+    return;
+  }
+
+  if (section === "returnedSha") {
+    report.returnedSha = value;
+    return;
+  }
+
   if (listSections.has(section)) {
     report[section].push(value);
   }
@@ -225,8 +245,8 @@ function normalizeList(values: string[]): string[] {
   return values.map(stripListMarker).filter((value) => value !== "" && !isNone(value));
 }
 
-function normalizeScalar(value: string | null): string | null {
-  if (value === null) {
+function normalizeScalar(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
     return null;
   }
 

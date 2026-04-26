@@ -12,6 +12,10 @@ export interface RemoteWorkspaceProvisionResult {
   status: "prepared" | "blocked";
   summary: string;
   actions: string[];
+  gitRefSync?: {
+    workerRef: string;
+    returnedRef: string;
+  };
 }
 
 export interface RemoteWorkspaceProvisioner {
@@ -72,7 +76,11 @@ export class GitRemoteWorkspaceProvisioner implements RemoteWorkspaceProvisioner
     return {
       status: "prepared",
       summary: `Remote workspace prepared at ${input.remoteWorkspacePath} from ${outbound.workerRef}.`,
-      actions: [...outbound.actions, ...remoteScratch.actions]
+      actions: [...outbound.actions, ...remoteScratch.actions],
+      gitRefSync: {
+        workerRef: outbound.workerRef,
+        returnedRef: outbound.returnedRef
+      }
     };
   }
 }

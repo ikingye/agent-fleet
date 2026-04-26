@@ -88,6 +88,8 @@ export interface RecordWorkerReportInput {
   nextActions: string[];
   needsOwnerReview: boolean;
   resumeId: string | null;
+  returnedRef?: string | null;
+  returnedSha?: string | null;
   markdown: string;
 }
 
@@ -104,6 +106,7 @@ export interface RecordStewardCheckpointInput {
   nextAction: string;
   goalIds: string[];
   workerSessionIds: string[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface AddCorrectionInput {
@@ -495,6 +498,8 @@ export class JsonControlPlaneStore {
       nextActions: [...input.nextActions],
       needsOwnerReview: input.needsOwnerReview,
       resumeId: input.resumeId,
+      returnedRef: input.returnedRef ?? null,
+      returnedSha: input.returnedSha ?? null,
       markdown: input.markdown,
       createdAt: now()
     };
@@ -514,7 +519,9 @@ export class JsonControlPlaneStore {
         blockers: report.blockers,
         nextActions: report.nextActions,
         needsOwnerReview: report.needsOwnerReview,
-        resumeId: report.resumeId
+        resumeId: report.resumeId,
+        returnedRef: report.returnedRef ?? null,
+        returnedSha: report.returnedSha ?? null
       }
     });
     await this.save();
@@ -585,7 +592,8 @@ export class JsonControlPlaneStore {
         reason: checkpoint.reason,
         goalIds: checkpoint.goalIds,
         workerSessionIds: checkpoint.workerSessionIds,
-        nextAction: checkpoint.nextAction
+        nextAction: checkpoint.nextAction,
+        ...(input.metadata ?? {})
       }
     });
     await this.save();
