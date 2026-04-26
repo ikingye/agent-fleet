@@ -1,8 +1,18 @@
 import { join, posix } from "node:path";
-import type { Goal, DecisionCorrection, ExecutionNode, WorkerReport, WorkerReportStatus } from "../../shared/types.js";
+import type {
+  Goal,
+  DecisionCorrection,
+  ExecutionNode,
+  GithubDeployKeyLease,
+  WorkerReport,
+  WorkerReportStatus,
+  WorkerSession
+} from "../../shared/types.js";
 import { GitRefSync, buildGitRefSyncRefs, type FetchInboundGitRefSyncInput, type GitRefSyncInboundResult } from "../remote/gitRefSync.js";
+import type { GithubDeployKeyLeaseResolver } from "../remote/githubDeployKeyLeaseResolver.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import type { RemoteWorkspaceProvisioner, RemoteWorkspaceProvisionResult } from "../remote/remoteWorkspaceProvisioner.js";
+import type { RemoteGithubDeployKeyProvisioner } from "../remote/remoteKeyProvisioner.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import {
   materializeWorktree,
@@ -20,6 +30,12 @@ export interface StewardRuntimeOptions {
   workerAdapter: WorkerAdapter;
   remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
   remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
+  githubDeployKeyLeaseResolver?: GithubDeployKeyLeaseResolver;
+  remoteGithubDeployKeyProvisioner?: Pick<
+    RemoteGithubDeployKeyProvisioner,
+    "installRemoteKey" | "cleanupRemoteKey"
+  >;
+  githubDeployKeyLeaseTtlMs?: number;
   gitRefSync?: Pick<GitRefSync, "fetchInbound">;
   defaultWorkerCwd: string;
   defaultRepositoryPath?: string;
@@ -38,6 +54,14 @@ interface WorkerPlacement {
 }
 
 type InboundGitRefSyncTrigger = "worker-report" | "remote-provision";
+
+const DEFAULT_GITHUB_DEPLOY_KEY_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
+
+interface RemoteDeployKeyDispatch {
+  lease: GithubDeployKeyLease;
+  gitSshCommand: string | null;
+  sshHost: string;
+}
 
 type InboundGitRefSyncAudit =
   | {
@@ -108,6 +132,8 @@ export class StewardRuntime {
       ]
     });
     let workerCwd = placement.cwd;
+    let remoteSession: WorkerSession | null = null;
+    let remoteDeployKey: RemoteDeployKeyDispatch | null = null;
 
     if (placement.hostId === null && this.options.worktreeRunner !== undefined) {
       plannedWorktree = planWorktree({
@@ -121,20 +147,98 @@ export class StewardRuntime {
       workerCwd = plannedWorktree.path;
     }
 
-    const provisionResult = await this.provisionRemoteWorkspaceIfNeeded(placement, input.workspacePath);
-
-    if (provisionResult?.status === "blocked") {
-      const session = await this.options.store.createWorkerSession({
+    if (placement.hostId !== null) {
+      remoteSession = await this.options.store.createWorkerSession({
         goalId: goal.id,
         decisionId: decision.id,
         kind: placement.adapter.kind,
-        command: "remote workspace provisioning",
+        command: "remote dispatch starting",
         cwd: placement.cwd,
         pid: null,
         hostId: placement.hostId,
         resumeId: null,
-        status: "failed",
-        lastOutput: provisionResult.summary
+        status: "starting",
+        lastOutput: "Remote dispatch selected; deploy-key lease and workspace provisioning pending."
+      });
+      await this.options.store.linkDecisionToWorkerSession(decision.id, remoteSession.id);
+
+      const deployKeyPreparation = await this.prepareRemoteDeployKeyIfAvailable({
+        goal,
+        placement,
+        session: remoteSession,
+        workspacePath: input.workspacePath
+      });
+
+      if (deployKeyPreparation.status === "blocked") {
+        await this.options.store.updateWorkerSessionLaunch({
+          workerSessionId: remoteSession.id,
+          command: "remote deploy key install",
+          cwd: placement.cwd,
+          pid: null,
+          resumeId: null,
+          status: "failed",
+          lastOutput: deployKeyPreparation.summary
+        });
+        await this.releaseRemoteDeployKeyIfNeeded({
+          deployKey: deployKeyPreparation.deployKey,
+          workerSessionId: remoteSession.id
+        });
+        await this.options.store.createWorktreeAssignment({
+          workerSessionId: remoteSession.id,
+          repositoryPath,
+          worktreePath: placement.worktreePath,
+          branchName: remoteWorkerBranchName(placement.workerName)
+        });
+        const updatedGoal = await this.options.store.updateGoalStatus(goal.id, "blocked");
+        await this.options.store.recordStewardCheckpoint({
+          reason: "dispatch",
+          summary: `Remote deploy-key provisioning blocked Worker launch for goal: ${goal.title}`,
+          nextAction: deployKeyPreparation.summary,
+          goalIds: [goal.id],
+          workerSessionIds: [remoteSession.id]
+        });
+
+        return updatedGoal;
+      }
+
+      remoteDeployKey = deployKeyPreparation.deployKey;
+    }
+
+    const provisionResult = await this.provisionRemoteWorkspaceIfNeeded(
+      placement,
+      input.workspacePath,
+      remoteDeployKey?.gitSshCommand ?? undefined
+    );
+
+    if (provisionResult?.status === "blocked") {
+      const session =
+        remoteSession ??
+        (await this.options.store.createWorkerSession({
+          goalId: goal.id,
+          decisionId: decision.id,
+          kind: placement.adapter.kind,
+          command: "remote workspace provisioning",
+          cwd: placement.cwd,
+          pid: null,
+          hostId: placement.hostId,
+          resumeId: null,
+          status: "failed",
+          lastOutput: provisionResult.summary
+        }));
+      if (remoteSession !== null) {
+        await this.options.store.updateWorkerSessionLaunch({
+          workerSessionId: session.id,
+          command: "remote workspace provisioning",
+          cwd: placement.cwd,
+          pid: null,
+          resumeId: null,
+          status: "failed",
+          lastOutput: provisionResult.summary
+        });
+      }
+      await this.releaseRemoteDeployKeyIfNeeded({
+        deployKey: remoteDeployKey,
+        workerSessionId: session.id
       });
       await this.options.store.createWorktreeAssignment({
         workerSessionId: session.id,
@@ -142,7 +246,9 @@ export class StewardRuntime {
         worktreePath: placement.worktreePath,
         branchName: remoteWorkerBranchName(placement.workerName)
       });
-      await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
+      if (remoteSession === null) {
+        await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
+      }
       const updatedGoal = await this.options.store.updateGoalStatus(goal.id, "blocked");
       await this.options.store.recordStewardCheckpoint({
         reason: "dispatch",
@@ -158,20 +264,34 @@ export class StewardRuntime {
     const workerResult = await placement.adapter.start({
       goalTitle: goal.title,
       cwd: workerCwd,
-      prompt: this.buildWorkerPrompt(placement.workerName, goal.title, goal.body, memoryContext)
+      prompt: this.buildWorkerPrompt(placement.workerName, goal.title, goal.body, memoryContext),
+      ...(remoteDeployKey?.gitSshCommand === null || remoteDeployKey?.gitSshCommand === undefined
+        ? {}
+        : { env: { GIT_SSH_COMMAND: remoteDeployKey.gitSshCommand } })
     });
-    const session = await this.options.store.createWorkerSession({
-      goalId: goal.id,
-      decisionId: decision.id,
-      kind: placement.adapter.kind,
-      command: workerResult.command,
-      cwd: workerResult.cwd,
-      pid: workerResult.pid,
-      hostId: placement.hostId,
-      resumeId: workerResult.resumeId,
-      status: workerResult.status,
-      lastOutput: workerResult.initialOutput
-    });
+    const session =
+      remoteSession === null
+        ? await this.options.store.createWorkerSession({
+            goalId: goal.id,
+            decisionId: decision.id,
+            kind: placement.adapter.kind,
+            command: workerResult.command,
+            cwd: workerResult.cwd,
+            pid: workerResult.pid,
+            hostId: placement.hostId,
+            resumeId: workerResult.resumeId,
+            status: workerResult.status,
+            lastOutput: workerResult.initialOutput
+          })
+        : await this.options.store.updateWorkerSessionLaunch({
+            workerSessionId: remoteSession.id,
+            command: workerResult.command,
+            cwd: workerResult.cwd,
+            pid: workerResult.pid,
+            resumeId: workerResult.resumeId,
+            status: workerResult.status,
+            lastOutput: workerResult.initialOutput
+          });
     this.attachWorkerCompletionHandler({
       completion: workerResult.completion,
       goalId: goal.id,
@@ -179,7 +299,8 @@ export class StewardRuntime {
       workerSessionId: session.id,
       workerName: placement.workerName,
       workspacePath: input.workspacePath,
-      provisionResult
+      provisionResult,
+      deployKey: remoteDeployKey
     });
 
     const worktreeAssignment =
@@ -203,7 +324,9 @@ export class StewardRuntime {
       branchName: worktreeAssignment.branchName
     });
 
-    await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
+    if (remoteSession === null) {
+      await this.options.store.linkDecisionToWorkerSession(decision.id, session.id);
+    }
 
     const updatedGoal = await this.options.store.updateGoalStatus(goal.id, goalStatusForWorkerStatus(workerResult.status));
     await this.options.store.recordStewardCheckpoint({
@@ -223,6 +346,12 @@ export class StewardRuntime {
       goalIds: [goal.id],
       workerSessionIds: [session.id]
     });
+    if (workerResult.status !== "running") {
+      await this.releaseRemoteDeployKeyIfNeeded({
+        deployKey: remoteDeployKey,
+        workerSessionId: session.id
+      });
+    }
 
     return updatedGoal;
   }
@@ -315,7 +444,8 @@ export class StewardRuntime {
 
   private async provisionRemoteWorkspaceIfNeeded(
     placement: WorkerPlacement,
-    workspacePath: string
+    workspacePath: string,
+    gitSshCommand?: string
   ): Promise<RemoteWorkspaceProvisionResult | null> {
     if (placement.hostId === null || this.options.remoteWorkspaceProvisioner === undefined) {
       return null;
@@ -336,7 +466,122 @@ export class StewardRuntime {
       node,
       localWorkspacePath: workspacePath,
       remoteWorkspacePath: placement.cwd,
-      workerName: placement.workerName
+      workerName: placement.workerName,
+      ...(gitSshCommand === undefined ? {} : { gitSshCommand })
+    });
+  }
+
+  private async prepareRemoteDeployKeyIfAvailable(input: {
+    goal: Goal;
+    placement: WorkerPlacement;
+    session: WorkerSession;
+    workspacePath: string;
+  }): Promise<
+    | { status: "skipped"; deployKey: null }
+    | { status: "prepared"; deployKey: RemoteDeployKeyDispatch }
+    | { status: "blocked"; summary: string; actions: string[]; deployKey: RemoteDeployKeyDispatch | null }
+  > {
+    if (
+      input.placement.hostId === null ||
+      this.options.githubDeployKeyLeaseResolver === undefined ||
+      this.options.remoteGithubDeployKeyProvisioner === undefined
+    ) {
+      return { status: "skipped", deployKey: null };
+    }
+
+    const dashboard = await this.options.store.dashboard();
+    const node = dashboard.executionNodes.find((item) => item.id === input.placement.hostId);
+
+    if (node === undefined) {
+      return {
+        status: "blocked",
+        summary: `Remote deploy key blocked: selected execution node ${input.placement.hostId} is no longer registered.`,
+        actions: ["Skipped deploy-key provisioning because selected remote node was missing"],
+        deployKey: null
+      };
+    }
+
+    const sshHost = node.sshHost?.trim();
+    if (sshHost === undefined || sshHost === "") {
+      return {
+        status: "blocked",
+        summary: "Remote deploy key blocked: selected remote node has no SSH host.",
+        actions: ["Skipped deploy-key provisioning because sshHost is missing"],
+        deployKey: null
+      };
+    }
+
+    const config = await this.options.githubDeployKeyLeaseResolver.resolve({
+      projectName: input.goal.projectName,
+      workspacePath: input.workspacePath,
+      node
+    });
+
+    if (config === null) {
+      return { status: "skipped", deployKey: null };
+    }
+
+    const lease = await this.options.store.acquireGithubDeployKeyLease({
+      projectName: input.goal.projectName,
+      workspacePath: input.workspacePath,
+      repositoryUrl: config.repositoryUrl,
+      repositorySlug: config.repositorySlug,
+      githubDeployKeyId: config.githubDeployKeyId,
+      publicKeyFingerprint: config.publicKeyFingerprint,
+      localPrivateKeyPath: config.localPrivateKeyPath,
+      remoteNodeId: node.id,
+      remotePrivateKeyPath: config.remotePrivateKeyPath,
+      workerSessionId: input.session.id,
+      expiresAt: new Date(
+        Date.now() + (this.options.githubDeployKeyLeaseTtlMs ?? DEFAULT_GITHUB_DEPLOY_KEY_LEASE_TTL_MS)
+      ).toISOString()
+    });
+    const install = await this.options.remoteGithubDeployKeyProvisioner.installRemoteKey({ lease, sshHost });
+    const deployKey = {
+      lease,
+      gitSshCommand: install.gitSshCommand,
+      sshHost
+    };
+
+    if (install.status === "blocked" || deployKey.gitSshCommand === null) {
+      return {
+        status: "blocked",
+        summary: install.summary,
+        actions: install.actions,
+        deployKey
+      };
+    }
+
+    return {
+      status: "prepared",
+      deployKey
+    };
+  }
+
+  private async releaseRemoteDeployKeyIfNeeded(input: {
+    deployKey: RemoteDeployKeyDispatch | null;
+    workerSessionId: string;
+  }): Promise<void> {
+    if (input.deployKey === null || this.options.remoteGithubDeployKeyProvisioner === undefined) {
+      return;
+    }
+
+    const releasedLease = await this.options.store.releaseGithubDeployKeyLease({
+      leaseId: input.deployKey.lease.id,
+      workerSessionId: input.workerSessionId
+    });
+
+    if (releasedLease.status === "active" || releasedLease.refcount > 0 || releasedLease.cleanupStatus !== "pending") {
+      return;
+    }
+
+    const cleanup = await this.options.remoteGithubDeployKeyProvisioner.cleanupRemoteKey({
+      lease: releasedLease,
+      sshHost: input.deployKey.sshHost
+    });
+    await this.options.store.updateGithubDeployKeyLeaseCleanup({
+      leaseId: releasedLease.id,
+      cleanupStatus: cleanup.cleanupStatus
     });
   }
 
@@ -411,6 +656,7 @@ export class StewardRuntime {
     workerSessionId: string;
     workspacePath: string;
     provisionResult: RemoteWorkspaceProvisionResult | null;
+    deployKey: RemoteDeployKeyDispatch | null;
   }): void {
     if (input.completion === undefined) {
       return;
@@ -418,70 +664,77 @@ export class StewardRuntime {
 
     void input.completion
       .then(async (completion) => {
-        const parsedReport = parseWorkerFinalReport(completion.output, { expectedWorkerName: input.workerName });
-        await this.options.store.updateWorkerSessionStatus({
-          workerSessionId: input.workerSessionId,
-          status: completion.status,
-          lastOutput: completion.output
-        });
-        const workerReport =
-          parsedReport === null
-            ? null
-            : await this.options.store.recordWorkerReport({
-                goalId: input.goalId,
-                workerSessionId: input.workerSessionId,
-                ...parsedReport
-              });
-        const inboundGitRefSync = await this.fetchInboundGitRefIfNeeded({
-          workerReport,
-          workerName: input.workerName,
-          workspacePath: input.workspacePath,
-          provisionResult: input.provisionResult
-        });
-        await this.options.store.updateGoalStatus(
-          input.goalId,
-          inboundGitRefSync.status === "blocked"
-            ? "blocked"
-            : goalStatusForWorkerOutcome(completion.status, workerReport?.status ?? null)
-        );
-        if (inboundGitRefSync.status === "fetched") {
-          await this.options.store.recordDecision({
-            goalId: input.goalId,
+        try {
+          const parsedReport = parseWorkerFinalReport(completion.output, { expectedWorkerName: input.workerName });
+          await this.options.store.updateWorkerSessionStatus({
             workerSessionId: input.workerSessionId,
-            title: "Queue review/merge handoff",
-            rationale:
-              "The Worker returned a git ref and the Steward fetched it locally; owner-facing review is needed before any merge.",
-            risk: "medium",
-            confidence: 0.78,
-            reversible: true,
-            needsHumanReview: true,
-            status: "active",
-            actions: [
-              `Review returned branch for Worker ${input.workerName}`,
-              `Returned ref: ${inboundGitRefSync.returnedRef}`,
-              "Decide whether to merge; do not merge automatically"
-            ]
+            status: completion.status,
+            lastOutput: completion.output
+          });
+          const workerReport =
+            parsedReport === null
+              ? null
+              : await this.options.store.recordWorkerReport({
+                  goalId: input.goalId,
+                  workerSessionId: input.workerSessionId,
+                  ...parsedReport
+                });
+          const inboundGitRefSync = await this.fetchInboundGitRefIfNeeded({
+            workerReport,
+            workerName: input.workerName,
+            workspacePath: input.workspacePath,
+            provisionResult: input.provisionResult
+          });
+          await this.options.store.updateGoalStatus(
+            input.goalId,
+            inboundGitRefSync.status === "blocked"
+              ? "blocked"
+              : goalStatusForWorkerOutcome(completion.status, workerReport?.status ?? null)
+          );
+          if (inboundGitRefSync.status === "fetched") {
+            await this.options.store.recordDecision({
+              goalId: input.goalId,
+              workerSessionId: input.workerSessionId,
+              title: "Queue review/merge handoff",
+              rationale:
+                "The Worker returned a git ref and the Steward fetched it locally; owner-facing review is needed before any merge.",
+              risk: "medium",
+              confidence: 0.78,
+              reversible: true,
+              needsHumanReview: true,
+              status: "active",
+              actions: [
+                `Review returned branch for Worker ${input.workerName}`,
+                `Returned ref: ${inboundGitRefSync.returnedRef}`,
+                "Decide whether to merge; do not merge automatically"
+              ]
+            });
+          }
+          await this.options.store.recordStewardCheckpoint({
+            reason: "recovery",
+            summary:
+              workerReport === null
+                ? `Worker session ${input.workerSessionId} ${completion.status} for goal: ${input.goalTitle}`
+                : `Worker session ${input.workerSessionId} reported ${workerReport.status} for goal: ${input.goalTitle}`,
+            nextAction:
+              appendInboundGitRefSyncNextAction(
+                workerReport === null
+                  ? buildCompletionNextAction(input.workerSessionId, completion.status, completion.output)
+                  : buildReportCompletionNextAction(input.workerSessionId, workerReport),
+                inboundGitRefSync
+              ),
+            goalIds: [input.goalId],
+            workerSessionIds: [input.workerSessionId],
+            metadata: {
+              inboundGitRefSync
+            }
+          });
+        } finally {
+          await this.releaseRemoteDeployKeyIfNeeded({
+            deployKey: input.deployKey,
+            workerSessionId: input.workerSessionId
           });
         }
-        await this.options.store.recordStewardCheckpoint({
-          reason: "recovery",
-          summary:
-            workerReport === null
-              ? `Worker session ${input.workerSessionId} ${completion.status} for goal: ${input.goalTitle}`
-              : `Worker session ${input.workerSessionId} reported ${workerReport.status} for goal: ${input.goalTitle}`,
-          nextAction:
-            appendInboundGitRefSyncNextAction(
-              workerReport === null
-                ? buildCompletionNextAction(input.workerSessionId, completion.status, completion.output)
-                : buildReportCompletionNextAction(input.workerSessionId, workerReport),
-              inboundGitRefSync
-            ),
-          goalIds: [input.goalId],
-          workerSessionIds: [input.workerSessionId],
-          metadata: {
-            inboundGitRefSync
-          }
-        });
       })
       .catch((error: unknown) => {
         console.error("Worker completion handler failed", error);

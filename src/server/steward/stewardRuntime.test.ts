@@ -10,7 +10,8 @@ import type {
 } from "../remote/remoteWorkspaceProvisioner.js";
 import { buildGitRefSyncRefs, type GitRefSyncInboundResult } from "../remote/gitRefSync.js";
 import { StewardRuntime } from "./stewardRuntime.js";
-import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
+import type { WorkerAdapter, WorkerCompletion } from "../workers/commandWorkerAdapter.js";
+import type { GithubDeployKeyLease } from "../../shared/types.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -25,7 +26,7 @@ async function waitForDashboard(
   store: JsonControlPlaneStore,
   predicate: (dashboard: Awaited<ReturnType<JsonControlPlaneStore["dashboard"]>>) => boolean
 ) {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     const dashboard = await store.dashboard();
 
     if (predicate(dashboard)) {
@@ -40,14 +41,16 @@ async function waitForDashboard(
 
 class FakeWorkerAdapter implements WorkerAdapter {
   readonly kind = "codex";
-  readonly startInputs: Array<{ goalTitle: string; prompt: string; cwd: string }> = [];
+  readonly startInputs: Array<{ goalTitle: string; prompt: string; cwd: string; env?: Record<string, string> }> = [];
 
   constructor(
     private readonly events?: string[],
-    private readonly eventName = "worker-start"
+    private readonly eventName = "worker-start",
+    private readonly completion?: Promise<WorkerCompletion>,
+    private readonly status: "running" | "completed" | "failed" = "running"
   ) {}
 
-  async start(input: { goalTitle: string; prompt: string; cwd: string }) {
+  async start(input: { goalTitle: string; prompt: string; cwd: string; env?: Record<string, string> }) {
     this.events?.push(this.eventName);
     this.startInputs.push(input);
 
@@ -56,8 +59,9 @@ class FakeWorkerAdapter implements WorkerAdapter {
       cwd: input.cwd,
       resumeId: `resume-${input.goalTitle.toLowerCase().replaceAll(" ", "-")}`,
       pid: 4242,
-      status: "running" as const,
-      initialOutput: `started with ${input.prompt}`
+      status: this.status,
+      initialOutput: `started with ${input.prompt}`,
+      ...(this.completion === undefined || this.status !== "running" ? {} : { completion: this.completion })
     };
   }
 }
@@ -74,6 +78,68 @@ class FakeRemoteWorkspaceProvisioner implements RemoteWorkspaceProvisioner {
     this.events?.push("provision");
     this.inputs.push(input);
     return this.result;
+  }
+}
+
+class FakeGithubDeployKeyLeaseResolver {
+  readonly inputs: Array<{ projectName: string; workspacePath: string; nodeId: string }> = [];
+
+  constructor(
+    private readonly config: {
+      repositoryUrl: string;
+      repositorySlug: string;
+      githubDeployKeyId: string | null;
+      publicKeyFingerprint: string;
+      localPrivateKeyPath: string;
+      remotePrivateKeyPath: string;
+    } | null
+  ) {}
+
+  async resolve(input: { projectName: string; workspacePath: string; node: { id: string } }) {
+    this.inputs.push({
+      projectName: input.projectName,
+      workspacePath: input.workspacePath,
+      nodeId: input.node.id
+    });
+    return this.config;
+  }
+}
+
+class FakeRemoteGithubDeployKeyProvisioner {
+  readonly installInputs: Array<{ lease: GithubDeployKeyLease; sshHost: string }> = [];
+  readonly cleanupInputs: Array<{ lease: GithubDeployKeyLease; sshHost: string }> = [];
+
+  constructor(
+    private readonly installResult: {
+      status: "installed" | "blocked";
+      summary: string;
+      actions: string[];
+      gitSshCommand: string | null;
+    } = {
+      status: "installed",
+      summary: "Remote deploy key installed.",
+      actions: ["Installed deploy key"],
+      gitSshCommand:
+        "ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443"
+    },
+    private readonly events?: string[]
+  ) {}
+
+  async installRemoteKey(input: { lease: GithubDeployKeyLease; sshHost: string }) {
+    this.events?.push("key-install");
+    this.installInputs.push(input);
+    return this.installResult;
+  }
+
+  async cleanupRemoteKey(input: { lease: GithubDeployKeyLease; sshHost: string }) {
+    this.events?.push("key-cleanup");
+    this.cleanupInputs.push(input);
+    return {
+      status: "completed" as const,
+      summary: "Remote deploy key cleanup completed.",
+      actions: ["Removed deploy key"],
+      cleanupStatus: "completed" as const
+    };
   }
 }
 
@@ -170,6 +236,219 @@ describe("StewardRuntime", () => {
       expect(dashboard.worktreeAssignments[0].branchName).toMatch(
         /^agent-fleet\/workers\/agent-fleet-run-high-cpu-build-remote-\d{12}$/
       );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("acquires and installs a deploy-key lease before remote provisioning and injects git ssh env", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const events: string[] = [];
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter(events, "remote-start");
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "prepared",
+      summary: "Remote workspace prepared from git origin.",
+      actions: ["Fetched git origin"]
+    }, events);
+    const keyResolver = new FakeGithubDeployKeyLeaseResolver({
+      repositoryUrl: "git@github.com:owner/agent-fleet.git",
+      repositorySlug: "owner-agent-fleet",
+      githubDeployKeyId: "github-key-123",
+      publicKeyFingerprint: "SHA256:project-key",
+      localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+      remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key"
+    });
+    const keyProvisioner = new FakeRemoteGithubDeployKeyProvisioner(undefined, events);
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const remoteNode = await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter,
+        remoteWorkspaceProvisioner: provisioner,
+        githubDeployKeyLeaseResolver: keyResolver,
+        remoteGithubDeployKeyProvisioner: keyProvisioner
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run high CPU build",
+        body: "Run high CPU tests on remote capacity."
+      });
+
+      const dashboard = await store.dashboard();
+      const session = dashboard.workerSessions[0];
+      const lease = dashboard.githubDeployKeyLeases[0];
+      const gitSshCommand =
+        "ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443";
+
+      expect(events).toEqual(["key-install", "provision", "remote-start"]);
+      expect(session).toMatchObject({
+        hostId: remoteNode.id,
+        command: "codexyoloproxy",
+        pid: 4242,
+        status: "running"
+      });
+      expect(lease).toMatchObject({
+        repositoryUrl: "git@github.com:owner/agent-fleet.git",
+        repositorySlug: "owner-agent-fleet",
+        activeWorkerSessionIds: [session.id],
+        remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key",
+        refcount: 1,
+        status: "active"
+      });
+      expect(keyProvisioner.installInputs).toEqual([{ lease, sshHost: "worker@linux-builder.internal" }]);
+      expect(provisioner.inputs[0]).toMatchObject({ gitSshCommand });
+      expect(remoteAdapter.startInputs[0].env).toEqual({ GIT_SSH_COMMAND: gitSshCommand });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("releases and cleans up the deploy-key lease when a remote Worker completes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<WorkerCompletion>();
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter(undefined, "remote-start", completion.promise);
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "prepared",
+      summary: "Remote workspace prepared from git origin.",
+      actions: ["Fetched git origin"]
+    });
+    const keyResolver = new FakeGithubDeployKeyLeaseResolver({
+      repositoryUrl: "git@github.com:owner/agent-fleet.git",
+      repositorySlug: "owner-agent-fleet",
+      githubDeployKeyId: null,
+      publicKeyFingerprint: "SHA256:project-key",
+      localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+      remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key"
+    });
+    const keyProvisioner = new FakeRemoteGithubDeployKeyProvisioner();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter,
+        remoteWorkspaceProvisioner: provisioner,
+        githubDeployKeyLeaseResolver: keyResolver,
+        remoteGithubDeployKeyProvisioner: keyProvisioner
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run high CPU build",
+        body: "Run high CPU tests on remote capacity."
+      });
+      completion.resolve({
+        status: "completed",
+        output: "Status: DONE\nVerification: npm test\n"
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (currentDashboard) => currentDashboard.githubDeployKeyLeases[0]?.cleanupStatus === "completed"
+      );
+      const lease = dashboard.githubDeployKeyLeases[0];
+
+      expect(lease).toMatchObject({
+        activeWorkerSessionIds: [],
+        refcount: 0,
+        status: "released",
+        cleanupStatus: "completed"
+      });
+      expect(keyProvisioner.cleanupInputs).toHaveLength(1);
+      expect(keyProvisioner.cleanupInputs[0]).toMatchObject({
+        sshHost: "worker@linux-builder.internal",
+        lease
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("releases and cleans up the deploy-key lease when a remote Worker fails to launch", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const localAdapter = new FakeWorkerAdapter();
+    const remoteAdapter = new FakeWorkerAdapter(undefined, "remote-start", undefined, "failed");
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "prepared",
+      summary: "Remote workspace prepared from git origin.",
+      actions: ["Fetched git origin"]
+    });
+    const keyResolver = new FakeGithubDeployKeyLeaseResolver({
+      repositoryUrl: "git@github.com:owner/agent-fleet.git",
+      repositorySlug: "owner-agent-fleet",
+      githubDeployKeyId: null,
+      publicKeyFingerprint: "SHA256:project-key",
+      localPrivateKeyPath: "/projects/agent-fleet/.agent-fleet/secrets/owner-agent-fleet/github-deploy-key",
+      remotePrivateKeyPath: "/tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key"
+    });
+    const keyProvisioner = new FakeRemoteGithubDeployKeyProvisioner();
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: localAdapter,
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter,
+        remoteWorkspaceProvisioner: provisioner,
+        githubDeployKeyLeaseResolver: keyResolver,
+        remoteGithubDeployKeyProvisioner: keyProvisioner
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run high CPU build",
+        body: "Run high CPU tests on remote capacity."
+      });
+
+      const dashboard = await store.dashboard();
+
+      expect(dashboard.workerSessions[0]).toMatchObject({ status: "failed" });
+      expect(dashboard.githubDeployKeyLeases[0]).toMatchObject({
+        activeWorkerSessionIds: [],
+        refcount: 0,
+        status: "released",
+        cleanupStatus: "completed"
+      });
+      expect(keyProvisioner.cleanupInputs).toHaveLength(1);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

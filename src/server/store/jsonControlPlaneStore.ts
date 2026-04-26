@@ -15,6 +15,7 @@ import type {
   ExecutionNode,
   Goal,
   GoalStatus,
+  GithubDeployKeyCleanupStatus,
   GithubDeployKeyLease,
   MemoryEntry,
   MemoryScope,
@@ -78,6 +79,16 @@ export interface UpdateWorkerSessionStatusInput {
   lastOutput?: string;
 }
 
+export interface UpdateWorkerSessionLaunchInput {
+  workerSessionId: string;
+  command: string;
+  cwd: string;
+  pid: number | null;
+  resumeId: string | null;
+  status: WorkerSessionStatus;
+  lastOutput?: string;
+}
+
 export interface RecordWorkerReportInput {
   goalId: string;
   workerSessionId: string;
@@ -126,6 +137,12 @@ export interface RenewGithubDeployKeyLeaseInput {
 export interface ReleaseGithubDeployKeyLeaseInput {
   leaseId: string;
   workerSessionId: string;
+  now?: string;
+}
+
+export interface UpdateGithubDeployKeyLeaseCleanupInput {
+  leaseId: string;
+  cleanupStatus: GithubDeployKeyCleanupStatus;
   now?: string;
 }
 
@@ -557,6 +574,44 @@ export class JsonControlPlaneStore {
     return session;
   }
 
+  async updateWorkerSessionLaunch(input: UpdateWorkerSessionLaunchInput): Promise<WorkerSession> {
+    const session = this.findWorkerSession(input.workerSessionId);
+    const previousStatus = session.status;
+
+    session.command = input.command;
+    session.cwd = input.cwd;
+    session.pid = input.pid;
+    session.resumeId = input.resumeId;
+    session.status = input.status;
+    if (input.lastOutput !== undefined) {
+      session.lastOutput = input.lastOutput;
+    }
+    session.updatedAt = now();
+
+    this.addEvent({
+      type: input.status === "failed" ? "worker.failed" : "worker.launch.updated",
+      goalId: session.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: session.id,
+      message:
+        input.status === "failed"
+          ? `${session.kind} Worker Agent failed to start`
+          : `${session.kind} Worker Agent launch details updated`,
+      metadata: {
+        previousStatus,
+        command: session.command,
+        cwd: session.cwd,
+        pid: session.pid,
+        resumeId: session.resumeId,
+        status: session.status,
+        lastOutput: session.lastOutput
+      }
+    });
+    await this.save();
+
+    return session;
+  }
+
   async recordWorkerReport(input: RecordWorkerReportInput): Promise<WorkerReport> {
     const goal = this.findGoal(input.goalId);
     const session = this.findWorkerSession(input.workerSessionId);
@@ -759,6 +814,25 @@ export class JsonControlPlaneStore {
       decisionId: session.decisionId,
       workerSessionId: session.id,
       message: `GitHub deploy-key lease released for ${lease.repositorySlug}`,
+      metadata: githubDeployKeyLeaseEventMetadata(lease)
+    });
+    await this.save();
+
+    return lease;
+  }
+
+  async updateGithubDeployKeyLeaseCleanup(input: UpdateGithubDeployKeyLeaseCleanupInput): Promise<GithubDeployKeyLease> {
+    const lease = this.findGithubDeployKeyLease(input.leaseId);
+    const timestamp = input.now ?? now();
+
+    lease.cleanupStatus = input.cleanupStatus;
+    lease.updatedAt = timestamp;
+    this.addEvent({
+      type: "github_deploy_key_lease.cleanup_updated",
+      goalId: null,
+      decisionId: null,
+      workerSessionId: null,
+      message: `GitHub deploy-key lease cleanup ${lease.cleanupStatus} for ${lease.repositorySlug}`,
       metadata: githubDeployKeyLeaseEventMetadata(lease)
     });
     await this.save();
