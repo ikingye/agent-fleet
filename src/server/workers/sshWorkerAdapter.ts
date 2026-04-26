@@ -163,9 +163,9 @@ export function buildSshWorkerCommand(input: BuildSshWorkerCommandInput): BuiltS
   const script = [
     `cd ${shellQuote(cwd)} && {`,
     `${envPrefix}${workerInvocation} &`,
-    "agent_fleet_worker_pid=$!",
-    `printf '\\n${REMOTE_PID_PREFIX} %s\\n' "$agent_fleet_worker_pid"`,
-    'wait "$agent_fleet_worker_pid"',
+    "agent_fleet_worker_pid=$!;",
+    `printf '\\n${REMOTE_PID_PREFIX} %s\\n' "$agent_fleet_worker_pid";`,
+    'wait "$agent_fleet_worker_pid";',
     "}"
   ].join(" ");
   const remoteCommand = `sh -lc ${shellQuote(script)}`;

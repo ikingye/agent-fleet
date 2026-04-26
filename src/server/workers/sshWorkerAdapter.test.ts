@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   ChildProcessSshWorkerRunner,
@@ -44,6 +45,23 @@ describe("buildSshWorkerCommand", () => {
     expect(built.args.at(-1)).toContain("'\\''say hi; reboot'\\''");
     expect(built.args.at(-1)).toContain("agent-fleet remote pid:");
     expect(built.args.at(-1)).toContain('wait "$agent_fleet_worker_pid"');
+  });
+
+  it("builds a syntactically valid remote shell wrapper", () => {
+    const built = buildSshWorkerCommand({
+      sshHost: "worker@example.com",
+      cwd: "/tmp",
+      workerCommand: "true"
+    });
+
+    expect(built.args.at(-1)).toContain('wait "$agent_fleet_worker_pid"; }');
+
+    const syntaxCheck = spawnSync("sh", ["-c", built.remoteCommand], {
+      encoding: "utf8"
+    });
+
+    expect(syntaxCheck.status).toBe(0);
+    expect(syntaxCheck.stderr).toBe("");
   });
 });
 
