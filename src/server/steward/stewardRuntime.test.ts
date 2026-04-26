@@ -8,6 +8,7 @@ import type {
   RemoteWorkspaceProvisioner,
   RemoteWorkspaceProvisionResult
 } from "../remote/remoteWorkspaceProvisioner.js";
+import { buildGitRefSyncRefs, type GitRefSyncInboundResult } from "../remote/gitRefSync.js";
 import { StewardRuntime } from "./stewardRuntime.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 
@@ -74,6 +75,44 @@ class FakeRemoteWorkspaceProvisioner implements RemoteWorkspaceProvisioner {
     this.inputs.push(input);
     return this.result;
   }
+}
+
+class FakeInboundGitRefSync {
+  readonly inputs: Array<{ workspacePath: string; workerName: string; expectedSha?: string }> = [];
+
+  constructor(private readonly result: "fetched" | "blocked") {}
+
+  async fetchInbound(input: { workspacePath: string; workerName: string; expectedSha?: string }) {
+    this.inputs.push(input);
+    const refs = buildGitRefSyncRefs(input.workerName);
+
+    return {
+      status: this.result,
+      summary:
+        this.result === "fetched"
+          ? `Returned git-ref sync fetched ${refs.returnedRef}.`
+          : `Returned git-ref sync blocked: failed to fetch returned ref ${refs.returnedRef}.`,
+      actions:
+        this.result === "fetched"
+          ? [`Fetched ${refs.returnedRef}`, `Checked out ${refs.returnedBranch}`]
+          : ["git fetch failed"],
+      repoRoot: "/projects/agent-fleet",
+      originUrl: "git@example.com:owner/agent-fleet.git",
+      returnedSha: input.expectedSha ?? "fedcba9876543210fedcba9876543210fedcba98",
+      ...refs
+    } satisfies GitRefSyncInboundResult;
+  }
+}
+
+function workerNameFromDispatchCheckpoint(dashboard: Awaited<ReturnType<JsonControlPlaneStore["dashboard"]>>): string {
+  const nextAction = dashboard.stewardCheckpoints[0]?.nextAction ?? "";
+  const match = /Worker Name: ([^.]+)\./.exec(nextAction);
+
+  if (match === null) {
+    throw new Error(`Dispatch checkpoint did not include a Worker Name: ${nextAction}`);
+  }
+
+  return match[1];
 }
 
 describe("StewardRuntime", () => {
@@ -952,6 +991,301 @@ describe("StewardRuntime", () => {
       });
       expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Owner review required.");
       expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).not.toContain("raw debug line");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fetches returned git refs from parsed Worker report metadata and queues review handoff", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+    const inboundSync = new FakeInboundGitRefSync("fetched");
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-returned-ref",
+              pid: 4848,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        gitRefSync: inboundSync
+      });
+
+      const goal = await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Return git ref",
+        body: "Fetch returned work before owner handoff."
+      });
+      const workerName = workerNameFromDispatchCheckpoint(await store.dashboard());
+      const returnedRef = buildGitRefSyncRefs(workerName).returnedRef;
+      const returnedSha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+      completion.resolve({
+        status: "completed",
+        output: [
+          `# ${workerName}`,
+          "Status: DONE",
+          "Verification:",
+          "- npm run check",
+          `Returned ref: ${returnedRef}`,
+          `Returned SHA: ${returnedSha}`
+        ].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          inboundSync.inputs.length === 1 &&
+          state.decisions.some((decision) => decision.title === "Queue review/merge handoff") &&
+          state.stewardCheckpoints.at(-1)?.nextAction.includes("Review/merge handoff queued") === true
+      );
+      const checkpointEvent = dashboard.events.at(-1);
+
+      expect(inboundSync.inputs).toEqual([
+        {
+          workspacePath: "/projects/agent-fleet",
+          workerName,
+          expectedSha: returnedSha
+        }
+      ]);
+      expect(dashboard.goals[0]).toMatchObject({ id: goal.id, status: "completed" });
+      expect(dashboard.workerReports?.[0]).toMatchObject({
+        returnedRef,
+        returnedSha
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Review/merge handoff queued");
+      expect(JSON.parse(checkpointEvent?.metadataJson ?? "{}")).toMatchObject({
+        inboundGitRefSync: {
+          status: "fetched",
+          trigger: "worker-report",
+          returnedRef,
+          returnedSha
+        }
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fetches returned git refs when remote provisioning advertised a Worker ref", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+    const inboundSync = new FakeInboundGitRefSync("fetched");
+    const remoteAdapter: WorkerAdapter = {
+      kind: "codex",
+      async start(input) {
+        return {
+          command: "codexyoloproxy",
+          cwd: input.cwd,
+          resumeId: "resume-remote-returned-ref",
+          pid: 4949,
+          status: "running" as const,
+          initialOutput: "Remote Worker accepted prompt",
+          completion: completion.promise
+        };
+      }
+    };
+    const provisioner = new FakeRemoteWorkspaceProvisioner({
+      status: "prepared",
+      summary: "Remote workspace prepared from refs/heads/agent-fleet/workers/placeholder.",
+      actions: ["Pushed Worker ref"],
+      gitRefSync: {
+        workerRef: "refs/heads/agent-fleet/workers/placeholder",
+        returnedRef: "refs/heads/agent-fleet/results/placeholder"
+      }
+    });
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      await store.upsertExecutionNode({
+        name: "linux-builder",
+        kind: "remote",
+        status: "ready",
+        sshHost: "worker@linux-builder.internal",
+        workRoot: "/srv/agent-fleet",
+        proxyUrl: null,
+        tags: ["remote", "linux", "high-cpu"]
+      });
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: new FakeWorkerAdapter(),
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        remoteWorkerAdapterFactory: () => remoteAdapter,
+        remoteWorkspaceProvisioner: provisioner,
+        gitRefSync: inboundSync
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Run high CPU returned sync",
+        body: "Run high CPU tests and fetch remote result ref."
+      });
+
+      completion.resolve({
+        status: "completed",
+        output: ["Status: DONE", "Verification:", "- npm run check"].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          inboundSync.inputs.length === 1 &&
+          state.stewardCheckpoints.at(-1)?.nextAction.includes("Review/merge handoff queued") === true
+      );
+      const checkpointEvent = dashboard.events.at(-1);
+
+      expect(inboundSync.inputs[0]).toMatchObject({
+        workspacePath: "/projects/agent-fleet"
+      });
+      expect(inboundSync.inputs[0].expectedSha).toBeUndefined();
+      expect(inboundSync.inputs[0].workerName).toMatch(/^agent-fleet-run-high-cpu-returned-sync-remote-\d{12}$/);
+      expect(JSON.parse(checkpointEvent?.metadataJson ?? "{}")).toMatchObject({
+        inboundGitRefSync: {
+          status: "fetched",
+          trigger: "remote-provision"
+        }
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips inbound git ref sync with a clear checkpoint when no returned ref is advertised", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+    const inboundSync = new FakeInboundGitRefSync("fetched");
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-no-returned-ref",
+              pid: 5050,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        gitRefSync: inboundSync
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "No returned ref",
+        body: "Complete without advertising returned git refs."
+      });
+
+      completion.resolve({
+        status: "completed",
+        output: ["Status: DONE", "Verification:", "- npm run check"].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          state.workerSessions[0].status === "completed" &&
+          state.stewardCheckpoints.at(-1)?.nextAction.includes("Returned git-ref sync skipped") === true
+      );
+      const checkpointEvent = dashboard.events.at(-1);
+
+      expect(inboundSync.inputs).toEqual([]);
+      expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain(
+        "Returned git-ref sync skipped: no returned ref/SHA or remote Worker ref was advertised."
+      );
+      expect(JSON.parse(checkpointEvent?.metadataJson ?? "{}")).toMatchObject({
+        inboundGitRefSync: {
+          status: "skipped",
+          reason: "missing-returned-ref"
+        }
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks completion handoff when inbound git ref sync fails", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-steward-"));
+    const completion = deferred<{ status: "completed"; output: string }>();
+    const inboundSync = new FakeInboundGitRefSync("blocked");
+
+    try {
+      const store = await JsonControlPlaneStore.open(join(dir, "state.json"));
+      const runtime = new StewardRuntime({
+        store,
+        workerAdapter: {
+          kind: "codex",
+          async start(input) {
+            return {
+              command: "codexyoloproxy",
+              cwd: input.cwd,
+              resumeId: "resume-blocked-returned-ref",
+              pid: 5151,
+              status: "running" as const,
+              initialOutput: "Worker accepted prompt",
+              completion: completion.promise
+            };
+          }
+        },
+        defaultWorkerCwd: "/worktrees/agent-fleet",
+        gitRefSync: inboundSync
+      });
+
+      await runtime.acceptGoal({
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        title: "Blocked returned ref",
+        body: "Complete with a returned ref that cannot be fetched."
+      });
+      const workerName = workerNameFromDispatchCheckpoint(await store.dashboard());
+      const returnedRef = buildGitRefSyncRefs(workerName).returnedRef;
+
+      completion.resolve({
+        status: "completed",
+        output: ["Status: DONE", `Returned ref: ${returnedRef}`].join("\n")
+      });
+
+      const dashboard = await waitForDashboard(
+        store,
+        (state) =>
+          inboundSync.inputs.length === 1 &&
+          state.goals[0].status === "blocked" &&
+          state.stewardCheckpoints.at(-1)?.nextAction.includes("Owner review required") === true
+      );
+      const checkpointEvent = dashboard.events.at(-1);
+
+      expect(dashboard.goals[0].status).toBe("blocked");
+      expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Returned git-ref sync blocked");
+      expect(dashboard.stewardCheckpoints.at(-1)?.nextAction).toContain("Owner review required.");
+      expect(JSON.parse(checkpointEvent?.metadataJson ?? "{}")).toMatchObject({
+        inboundGitRefSync: {
+          status: "blocked",
+          trigger: "worker-report",
+          returnedRef
+        }
+      });
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

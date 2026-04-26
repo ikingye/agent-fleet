@@ -1,6 +1,6 @@
 import { join, posix } from "node:path";
 import type { Goal, DecisionCorrection, ExecutionNode, WorkerReport, WorkerReportStatus } from "../../shared/types.js";
-import { buildGitRefSyncRefs } from "../remote/gitRefSync.js";
+import { GitRefSync, buildGitRefSyncRefs, type FetchInboundGitRefSyncInput, type GitRefSyncInboundResult } from "../remote/gitRefSync.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import type { RemoteWorkspaceProvisioner, RemoteWorkspaceProvisionResult } from "../remote/remoteWorkspaceProvisioner.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
@@ -20,6 +20,7 @@ export interface StewardRuntimeOptions {
   workerAdapter: WorkerAdapter;
   remoteWorkerAdapterFactory?: (node: ExecutionNode) => WorkerAdapter;
   remoteWorkspaceProvisioner?: RemoteWorkspaceProvisioner;
+  gitRefSync?: Pick<GitRefSync, "fetchInbound">;
   defaultWorkerCwd: string;
   defaultRepositoryPath?: string;
   worktreeRoot?: string;
@@ -35,6 +36,26 @@ interface WorkerPlacement {
   resourceTags: string[];
   remoteNodeName: string | null;
 }
+
+type InboundGitRefSyncTrigger = "worker-report" | "remote-provision";
+
+type InboundGitRefSyncAudit =
+  | {
+      status: "skipped";
+      reason: "missing-returned-ref";
+    }
+  | {
+      status: GitRefSyncInboundResult["status"];
+      trigger: InboundGitRefSyncTrigger;
+      summary: string;
+      actions: string[];
+      repoRoot: string | null;
+      originUrl: string | null;
+      workerRef: string;
+      returnedRef: string;
+      returnedSha: string | null;
+      expectedSha?: string;
+    };
 
 export interface AcceptGoalInput {
   projectName: string;
@@ -155,7 +176,10 @@ export class StewardRuntime {
       completion: workerResult.completion,
       goalId: goal.id,
       goalTitle: goal.title,
-      workerSessionId: session.id
+      workerSessionId: session.id,
+      workerName: placement.workerName,
+      workspacePath: input.workspacePath,
+      provisionResult
     });
 
     const worktreeAssignment =
@@ -384,6 +408,9 @@ export class StewardRuntime {
     goalId: string;
     goalTitle: string;
     workerSessionId: string;
+    workerName: string;
+    workspacePath: string;
+    provisionResult: RemoteWorkspaceProvisionResult | null;
   }): void {
     if (input.completion === undefined) {
       return;
@@ -405,10 +432,37 @@ export class StewardRuntime {
                 workerSessionId: input.workerSessionId,
                 ...parsedReport
               });
+        const inboundGitRefSync = await this.fetchInboundGitRefIfNeeded({
+          workerReport,
+          workerName: input.workerName,
+          workspacePath: input.workspacePath,
+          provisionResult: input.provisionResult
+        });
         await this.options.store.updateGoalStatus(
           input.goalId,
-          goalStatusForWorkerOutcome(completion.status, workerReport?.status ?? null)
+          inboundGitRefSync.status === "blocked"
+            ? "blocked"
+            : goalStatusForWorkerOutcome(completion.status, workerReport?.status ?? null)
         );
+        if (inboundGitRefSync.status === "fetched") {
+          await this.options.store.recordDecision({
+            goalId: input.goalId,
+            workerSessionId: input.workerSessionId,
+            title: "Queue review/merge handoff",
+            rationale:
+              "The Worker returned a git ref and the Steward fetched it locally; owner-facing review is needed before any merge.",
+            risk: "medium",
+            confidence: 0.78,
+            reversible: true,
+            needsHumanReview: true,
+            status: "active",
+            actions: [
+              `Review returned branch for Worker ${input.workerName}`,
+              `Returned ref: ${inboundGitRefSync.returnedRef}`,
+              "Decide whether to merge; do not merge automatically"
+            ]
+          });
+        }
         await this.options.store.recordStewardCheckpoint({
           reason: "recovery",
           summary:
@@ -416,16 +470,77 @@ export class StewardRuntime {
               ? `Worker session ${input.workerSessionId} ${completion.status} for goal: ${input.goalTitle}`
               : `Worker session ${input.workerSessionId} reported ${workerReport.status} for goal: ${input.goalTitle}`,
           nextAction:
-            workerReport === null
-              ? buildCompletionNextAction(input.workerSessionId, completion.status, completion.output)
-              : buildReportCompletionNextAction(input.workerSessionId, workerReport),
+            appendInboundGitRefSyncNextAction(
+              workerReport === null
+                ? buildCompletionNextAction(input.workerSessionId, completion.status, completion.output)
+                : buildReportCompletionNextAction(input.workerSessionId, workerReport),
+              inboundGitRefSync
+            ),
           goalIds: [input.goalId],
-          workerSessionIds: [input.workerSessionId]
+          workerSessionIds: [input.workerSessionId],
+          metadata: {
+            inboundGitRefSync
+          }
         });
       })
       .catch((error: unknown) => {
         console.error("Worker completion handler failed", error);
       });
+  }
+
+  private async fetchInboundGitRefIfNeeded(input: {
+    workerReport: WorkerReport | null;
+    workerName: string;
+    workspacePath: string;
+    provisionResult: RemoteWorkspaceProvisionResult | null;
+  }): Promise<InboundGitRefSyncAudit> {
+    const trigger = buildInboundGitRefSyncTrigger(input.workerReport, input.provisionResult);
+
+    if (trigger === null) {
+      return {
+        status: "skipped",
+        reason: "missing-returned-ref"
+      };
+    }
+
+    const gitRefSync = this.options.gitRefSync ?? new GitRefSync();
+    const syncInput: FetchInboundGitRefSyncInput = {
+      workspacePath: input.workspacePath,
+      workerName: input.workerName,
+      ...(trigger.expectedSha === undefined ? {} : { expectedSha: trigger.expectedSha })
+    };
+
+    try {
+      const result = await gitRefSync.fetchInbound(syncInput);
+
+      return {
+        status: result.status,
+        trigger: trigger.trigger,
+        summary: result.summary,
+        actions: result.actions,
+        repoRoot: result.repoRoot,
+        originUrl: result.originUrl,
+        workerRef: result.workerRef,
+        returnedRef: trigger.returnedRef ?? result.returnedRef,
+        returnedSha: result.returnedSha,
+        ...(trigger.expectedSha === undefined ? {} : { expectedSha: trigger.expectedSha })
+      };
+    } catch (error: unknown) {
+      const refs = buildGitRefSyncRefs(input.workerName);
+
+      return {
+        status: "blocked",
+        trigger: trigger.trigger,
+        summary: `Returned git-ref sync blocked: ${error instanceof Error ? error.message : String(error)}`,
+        actions: ["Inbound git-ref sync threw before returning a result."],
+        repoRoot: null,
+        originUrl: null,
+        workerRef: refs.workerRef,
+        returnedRef: trigger.returnedRef ?? refs.returnedRef,
+        returnedSha: null,
+        ...(trigger.expectedSha === undefined ? {} : { expectedSha: trigger.expectedSha })
+      };
+    }
   }
 }
 
@@ -601,6 +716,52 @@ function appendProvisionSummary(nextAction: string, provisionResult: RemoteWorks
   }
 
   return `${nextAction} Remote workspace provisioning: ${provisionResult.summary}`;
+}
+
+function buildInboundGitRefSyncTrigger(
+  workerReport: WorkerReport | null,
+  provisionResult: RemoteWorkspaceProvisionResult | null
+): { trigger: InboundGitRefSyncTrigger; returnedRef: string | null; expectedSha?: string } | null {
+  const returnedRef = normalizeOptionalString(workerReport?.returnedRef);
+  const returnedSha = normalizeOptionalString(workerReport?.returnedSha);
+
+  if (returnedRef !== null || returnedSha !== null) {
+    return {
+      trigger: "worker-report",
+      returnedRef,
+      ...(returnedSha === null ? {} : { expectedSha: returnedSha })
+    };
+  }
+
+  if (provisionResult?.gitRefSync?.workerRef !== undefined) {
+    return {
+      trigger: "remote-provision",
+      returnedRef: provisionResult.gitRefSync.returnedRef
+    };
+  }
+
+  return null;
+}
+
+function appendInboundGitRefSyncNextAction(nextAction: string, audit: InboundGitRefSyncAudit): string {
+  if (audit.status === "skipped") {
+    return `${nextAction} Returned git-ref sync skipped: no returned ref/SHA or remote Worker ref was advertised.`;
+  }
+
+  if (audit.status === "blocked") {
+    return `${nextAction} ${audit.summary} Owner review required.`;
+  }
+
+  return `${nextAction} ${audit.summary} Review/merge handoff queued; inspect the returned branch and decide whether to merge.`;
+}
+
+function normalizeOptionalString(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 function summarizeWorkerOutput(output: string): string {

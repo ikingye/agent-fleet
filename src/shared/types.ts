@@ -66,6 +66,8 @@ export interface WorkerReport {
   nextActions: string[];
   needsOwnerReview: boolean;
   resumeId: string | null;
+  returnedRef?: string | null;
+  returnedSha?: string | null;
   markdown: string;
   createdAt: string;
 }
