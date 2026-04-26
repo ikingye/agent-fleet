@@ -60,6 +60,38 @@ describe("GitRemoteWorkspaceProvisioner", () => {
     }
   });
 
+  it("passes an optional deploy-key GIT_SSH_COMMAND into remote scratch git operations", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-provision-"));
+    const workspace = join(dir, "workspace");
+    const origin = join(dir, "origin.git");
+    const runner = new CapturingProvisionRunner();
+
+    try {
+      await run("git", ["init", "--bare", origin]);
+      await createGitWorkspace(workspace, origin);
+      const provisioner = new GitRemoteWorkspaceProvisioner(new GitRefSync(runner));
+
+      const result = await provisioner.provision({
+        node: remoteNode(),
+        localWorkspacePath: workspace,
+        remoteWorkspacePath: "/srv/agent-fleet/agent-fleet/repo",
+        workerName: "agent-fleet-run-build-remote-202604262208",
+        gitSshCommand:
+          "ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443"
+      });
+
+      expect(result.status).toBe("prepared");
+      expect(runner.sshInputs[0].remoteScript).toContain(
+        "env GIT_SSH_COMMAND='ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443' git clone"
+      );
+      expect(runner.sshInputs[0].remoteScript).toContain(
+        "env GIT_SSH_COMMAND='ssh -i /tmp/agent-fleet/keys/owner-agent-fleet/github-deploy-key -o IdentitiesOnly=yes -o HostName=ssh.github.com -o Port=443' git fetch"
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks after ensuring the remote cwd when the local git workspace has no origin", async () => {
     const dir = await mkdtemp(join(tmpdir(), "agent-fleet-provision-"));
     const workspace = join(dir, "workspace");
