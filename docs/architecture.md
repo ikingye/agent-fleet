@@ -9,6 +9,7 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 - `src/server/steward`: orchestration behavior that turns human goals into decisions and Worker instructions.
 - `src/server/store`: durable state for goals, decisions, Worker sessions, corrections, memories, execution nodes, and events.
 - `src/server/workers`: process adapters for Worker Agent commands.
+- `src/server/remote`: pure remote execution policy helpers, including domain-aware proxy routing and remote node readiness decisions.
 - `src/shared`: TypeScript contracts shared by browser and server.
 
 ## Current Flow
@@ -29,5 +30,6 @@ The first implementation uses `.agent-fleet/control-plane.json`. This keeps the 
 
 - HTTP routes should not directly spawn Worker commands.
 - Worker adapters should not own product decision logic.
+- Remote helpers should stay pure unless they are explicit adapters; SSH and network probes belong behind adapter boundaries.
 - Steward logic should record decisions before launching irreversible or externally visible work.
 - Shared types should remain serializable and browser-safe.

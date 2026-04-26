@@ -25,7 +25,7 @@
 
 - Remote node inventory.
 - SSH execution adapter.
-- Domain-aware proxy fallback.
+- Domain-aware proxy fallback policy foundation.
 - Load-aware placement of Worker Agents.
 
 ## Phase 5: Learning Steward

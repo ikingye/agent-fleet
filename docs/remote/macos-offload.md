@@ -17,6 +17,8 @@ Some remote servers can reach mainland China sites directly but cannot reach Goo
 - Use SSH-configured forwarding for blocked domains.
 - Avoid blindly proxying all traffic.
 
+`src/server/remote/proxyPolicy.ts` contains the current pure routing policy. It routes configured mainland domains directly, uses a forwarded proxy only for configured global domains when a proxy URL is available, and leaves unconfigured domains on the direct route by default.
+
 Example SSH config pattern:
 
 ```sshconfig
@@ -24,3 +26,7 @@ RemoteForward 127.0.0.1:1080 127.0.0.1:1080
 ```
 
 The remote Worker process can then use the forwarded proxy for domains that require it.
+
+## Readiness Model
+
+`src/server/remote/remoteNodeReadiness.ts` contains a pure readiness check for remote node facts the Steward already knows, such as status, SSH host, work root, and whether a proxy is required. It does not open SSH connections or probe the network; future adapters should record probe results separately and pass those facts into the readiness helper.
