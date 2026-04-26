@@ -143,4 +143,77 @@ describe("JsonControlPlaneStore", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("updates Worker session status and output with an audit event", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const goal = await store.createGoal({
+        projectName: "agent-fleet",
+        title: "Supervise Worker sessions",
+        body: "Keep Worker lifecycle status durable after restart."
+      });
+      const decision = await store.recordDecision({
+        goalId: goal.id,
+        workerSessionId: null,
+        title: "Start lifecycle supervision",
+        rationale: "The Steward Agent needs durable Worker session updates.",
+        risk: "medium",
+        confidence: 0.8,
+        reversible: true,
+        needsHumanReview: true,
+        status: "active",
+        actions: ["Record status transitions", "Persist last output"]
+      });
+      const worker = await store.createWorkerSession({
+        goalId: goal.id,
+        decisionId: decision.id,
+        kind: "codex",
+        command: "codexyoloproxy",
+        cwd: "/worktrees/supervisor",
+        pid: 5151,
+        hostId: "local",
+        resumeId: "resume-supervisor",
+        status: "running",
+        lastOutput: "Worker started"
+      });
+
+      const updated = await store.updateWorkerSessionStatus({
+        workerSessionId: worker.id,
+        status: "completed",
+        lastOutput: "npm run check passed"
+      });
+      const reopened = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await reopened.dashboard();
+      const event = dashboard.events.at(-1);
+
+      expect(updated).toMatchObject({
+        id: worker.id,
+        status: "completed",
+        lastOutput: "npm run check passed"
+      });
+      expect(Date.parse(updated.updatedAt)).toBeGreaterThanOrEqual(Date.parse(worker.updatedAt));
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        id: worker.id,
+        status: "completed",
+        lastOutput: "npm run check passed"
+      });
+      expect(event).toMatchObject({
+        type: "worker.status.updated",
+        goalId: goal.id,
+        decisionId: decision.id,
+        workerSessionId: worker.id,
+        message: "Worker session status changed from running to completed"
+      });
+      expect(JSON.parse(event?.metadataJson ?? "{}")).toEqual({
+        previousStatus: "running",
+        status: "completed",
+        lastOutput: "npm run check passed"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

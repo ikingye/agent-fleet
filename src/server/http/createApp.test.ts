@@ -122,6 +122,97 @@ describe("API routes", () => {
     }
   });
 
+  it("updates Worker session lifecycle status through the API", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codexyoloproxy",
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          title: "Supervise Worker sessions",
+          body: "Keep Worker lifecycle status durable."
+        }
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const workerSessionId = dashboard.workerSessions[0].id;
+
+      const statusResponse = await app.inject({
+        method: "POST",
+        url: `/api/worker-sessions/${workerSessionId}/status`,
+        payload: {
+          status: "completed",
+          lastOutput: "Worker finished npm run check"
+        }
+      });
+
+      expect(statusResponse.statusCode).toBe(200);
+      expect(statusResponse.json()).toMatchObject({
+        workerSession: {
+          id: workerSessionId,
+          status: "completed",
+          lastOutput: "Worker finished npm run check"
+        }
+      });
+
+      const updated = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      expect(updated.workerSessions[0]).toMatchObject({
+        id: workerSessionId,
+        status: "completed",
+        lastOutput: "Worker finished npm run check"
+      });
+      expect(updated.events.map((event: { type: string }) => event.type)).toContain("worker.status.updated");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("rejects invalid Worker session lifecycle status updates", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codexyoloproxy",
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          title: "Validate lifecycle updates",
+          body: "Reject unknown Worker status values."
+        }
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const workerSessionId = dashboard.workerSessions[0].id;
+
+      const statusResponse = await app.inject({
+        method: "POST",
+        url: `/api/worker-sessions/${workerSessionId}/status`,
+        payload: {
+          status: "stale",
+          lastOutput: "not a valid durable status"
+        }
+      });
+
+      expect(statusResponse.statusCode).toBe(400);
+      expect(statusResponse.json()).toMatchObject({
+        error: "Bad Request",
+        message: "status must be one of: starting, running, paused, completed, failed"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("registers a remote execution node and exposes it on the dashboard", async () => {
     const app = await createApp({
       statePath: join(dir, "state.json"),

@@ -1,7 +1,7 @@
 import cors from "@fastify/cors";
 import fastify from "fastify";
 import { join } from "node:path";
-import type { ExecutionNode } from "../../shared/types.js";
+import type { ExecutionNode, WorkerSessionStatus } from "../../shared/types.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { StewardRuntime } from "../steward/stewardRuntime.js";
@@ -43,6 +43,32 @@ function optionalString(value: unknown, name: string): string | null {
 
   const trimmed = value.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+function optionalLastOutput(value: unknown): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("lastOutput must be a string when provided");
+  }
+
+  return value;
+}
+
+function requireWorkerSessionStatus(value: unknown): WorkerSessionStatus {
+  if (
+    value === "starting" ||
+    value === "running" ||
+    value === "paused" ||
+    value === "completed" ||
+    value === "failed"
+  ) {
+    return value;
+  }
+
+  throw new Error("status must be one of: starting, running, paused, completed, failed");
 }
 
 function requireExecutionNodeKind(value: unknown): ExecutionNode["kind"] {
@@ -140,6 +166,31 @@ export async function createApp(options: CreateAppOptions = {}) {
       decisionId: requireString(params.id, "id"),
       body: requireString(body.body, "body")
     });
+  });
+
+  app.post("/api/worker-sessions/:id/status", async (request, reply) => {
+    const params = request.params as { id?: string };
+    const body = requestBody(request.body);
+
+    try {
+      const workerSession = await store.updateWorkerSessionStatus({
+        workerSessionId: requireString(params.id, "id"),
+        status: requireWorkerSessionStatus(body.status),
+        lastOutput: optionalLastOutput(body.lastOutput)
+      });
+
+      return { workerSession };
+    } catch (error) {
+      if (error instanceof Error) {
+        const statusCode = error.message.startsWith("Worker session not found:") ? 404 : 400;
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
   });
 
   app.post("/api/execution-nodes", async (request, reply) => {

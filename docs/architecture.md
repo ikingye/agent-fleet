@@ -26,6 +26,12 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 
 The first implementation uses `.agent-fleet/control-plane.json`. This keeps the project easy to inspect and test. A future database can preserve the same domain records while improving concurrency, querying, and log volume.
 
+## Lifecycle Supervision
+
+Worker session lifecycle is durable state, not terminal state. External Worker adapters or daemons can report lifecycle changes through `POST /api/worker-sessions/:id/status` with a strict durable status and optional `lastOutput`; the store updates the Worker session and records a `worker.status.updated` audit event.
+
+After a Steward Agent restart, a supervisor loop should load `GET /api/dashboard` or call the store directly, pass running or starting Worker sessions to `reconcileWorkerSessions`, and provide an injected process probe for the execution environment. The reconcile module does not probe real processes itself; it maps probe observations to deterministic status updates, such as marking a running session `paused` when its recorded process is missing but a resume id exists. Production runners should call the same store update path so dashboard state and audit history stay inspectable.
+
 ## Worktrees
 
 Worktree planning is metadata-only. `planWorktree` derives the intended branch, path, and human-readable command for a Worker Agent assignment without touching git or the filesystem.

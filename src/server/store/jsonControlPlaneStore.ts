@@ -55,6 +55,12 @@ export interface CreateWorkerSessionInput {
   lastOutput?: string;
 }
 
+export interface UpdateWorkerSessionStatusInput {
+  workerSessionId: string;
+  status: WorkerSessionStatus;
+  lastOutput?: string;
+}
+
 export interface CreateWorktreeAssignmentInput {
   workerSessionId: string;
   repositoryPath: string;
@@ -268,6 +274,34 @@ export class JsonControlPlaneStore {
         pid: session.pid,
         resumeId: session.resumeId
       }
+    });
+    await this.save();
+
+    return session;
+  }
+
+  async updateWorkerSessionStatus(input: UpdateWorkerSessionStatusInput): Promise<WorkerSession> {
+    const session = this.findWorkerSession(input.workerSessionId);
+    const previousStatus = session.status;
+    const metadata: Record<string, unknown> = {
+      previousStatus,
+      status: input.status
+    };
+
+    session.status = input.status;
+    if (input.lastOutput !== undefined) {
+      session.lastOutput = input.lastOutput;
+      metadata.lastOutput = session.lastOutput;
+    }
+    session.updatedAt = now();
+
+    this.addEvent({
+      type: "worker.status.updated",
+      goalId: session.goalId,
+      decisionId: session.decisionId,
+      workerSessionId: session.id,
+      message: `Worker session status changed from ${previousStatus} to ${session.status}`,
+      metadata
     });
     await this.save();
 
