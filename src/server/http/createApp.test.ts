@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./createApp.js";
+import type { RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import type { RemoteWorkspaceProvisioner } from "../remote/remoteWorkspaceProvisioner.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
 import type { SshWorkerProcessInput, SshWorkerProcessResult, SshWorkerProcessRunner } from "../workers/sshWorkerAdapter.js";
@@ -51,6 +52,17 @@ class CapturingSshRunner implements SshWorkerProcessRunner {
   constructor(private readonly result: SshWorkerProcessResult) {}
 
   async run(input: SshWorkerProcessInput): Promise<SshWorkerProcessResult> {
+    this.inputs.push(input);
+    return this.result;
+  }
+}
+
+class CapturingRemoteCommandRunner implements RemoteCommandRunner {
+  readonly inputs: Array<{ sshHost: string; remoteScript: string }> = [];
+
+  constructor(private readonly result: { exitCode: number; stdout: string; stderr: string }) {}
+
+  async run(input: { sshHost: string; remoteScript: string }): Promise<{ exitCode: number; stdout: string; stderr: string }> {
     this.inputs.push(input);
     return this.result;
   }
@@ -709,6 +721,79 @@ describe("API routes", () => {
     }
   });
 
+  it("reconciles remote Worker sessions through the execution node sshHost", async () => {
+    const sshRunner = new CapturingSshRunner({
+      status: "running",
+      output: "accepted remote goal\nresume id: remote-reconcile\nagent-fleet remote pid: 7777\n",
+      pid: 7777
+    });
+    const remoteRunner = new CapturingRemoteCommandRunner({ exitCode: 1, stdout: "", stderr: "" });
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "fake-remote-worker",
+      defaultWorkerCwd: "/worktrees/agent-fleet",
+      remoteWorkspaceProvisioner: preparedRemoteWorkspaceProvisioner,
+      remoteSshWorkerRunner: sshRunner,
+      remoteCommandRunner: remoteRunner
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "aicp-hhht-231",
+          kind: "remote",
+          status: "ready",
+          sshHost: "aicp-hhht-231",
+          workRoot: "/root/agent-fleet-workspaces",
+          proxyUrl: null,
+          tags: ["remote", "linux", "high-cpu"]
+        }
+      });
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Remote high CPU reconcile",
+          body: "Run this high CPU Worker remotely, then reconcile its remote pid."
+        }
+      });
+      const before = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      const reconcileResponse = await app.inject({
+        method: "POST",
+        url: "/api/recovery/reconcile"
+      });
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(reconcileResponse.statusCode).toBe(200);
+      expect(remoteRunner.inputs).toEqual([
+        {
+          sshHost: "aicp-hhht-231",
+          remoteScript: "kill -0 7777"
+        }
+      ]);
+      expect(reconcileResponse.json()).toEqual({
+        checked: 1,
+        updated: 1,
+        staleSessionIds: [before.workerSessions[0].id],
+        runningSessionIds: []
+      });
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        hostId: before.executionNodes[0].id,
+        pid: 7777,
+        status: "paused",
+        resumeId: "remote-reconcile",
+        lastOutput: "remote pid 7777 is no longer running on aicp-hhht-231"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("runs autonomy reconcile and records an auditable checkpoint without dispatching Workers", async () => {
     let starts = 0;
     const app = await createApp({
@@ -951,6 +1036,60 @@ describe("API routes", () => {
         "execution_node.registered",
         "execution_node.updated"
       ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("probes remote execution node readiness through a lightweight ssh command", async () => {
+    const remoteRunner = new CapturingRemoteCommandRunner({
+      exitCode: 0,
+      stdout: "/usr/local/bin/codex\n",
+      stderr: ""
+    });
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerCommand: "codex",
+      workerAdapter: fakeWorkerAdapter,
+      remoteCommandRunner: remoteRunner
+    });
+
+    try {
+      const nodeResponse = await app.inject({
+        method: "POST",
+        url: "/api/execution-nodes",
+        payload: {
+          name: "linux-builder",
+          kind: "remote",
+          status: "ready",
+          sshHost: "worker@linux-builder.internal",
+          workRoot: "/srv/agent fleet",
+          proxyUrl: null
+        }
+      });
+      const node = nodeResponse.json();
+
+      const probeResponse = await app.inject({
+        method: "POST",
+        url: `/api/execution-nodes/${node.id}/probe`
+      });
+
+      expect(probeResponse.statusCode).toBe(200);
+      expect(remoteRunner.inputs).toEqual([
+        {
+          sshHost: "worker@linux-builder.internal",
+          remoteScript: "test -d '/srv/agent fleet' && command -v 'codex' >/dev/null 2>&1"
+        }
+      ]);
+      expect(probeResponse.json()).toEqual({
+        ready: true,
+        reasons: [],
+        checks: {
+          sshHost: "worker@linux-builder.internal",
+          workRoot: "/srv/agent fleet",
+          codexCommand: "codex"
+        }
+      });
     } finally {
       await app.close();
     }
