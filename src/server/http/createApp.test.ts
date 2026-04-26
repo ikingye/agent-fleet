@@ -21,6 +21,30 @@ const fakeWorkerAdapter: WorkerAdapter = {
   }
 };
 
+function countingWorkerAdapter() {
+  let starts = 0;
+  const adapter: WorkerAdapter = {
+    kind: "codex",
+    async start(input) {
+      starts += 1;
+
+      return {
+        command: "codexyoloproxy",
+        cwd: input.cwd,
+        resumeId: `resume-message-loop-${starts}`,
+        pid: 4242 + starts,
+        status: "running",
+        initialOutput: "Worker started"
+      };
+    }
+  };
+
+  return {
+    adapter,
+    starts: () => starts
+  };
+}
+
 class CapturingSshRunner implements SshWorkerProcessRunner {
   readonly inputs: SshWorkerProcessInput[] = [];
 
@@ -229,6 +253,142 @@ describe("API routes", () => {
       expect(listResponse.json().messages).toHaveLength(2);
       expect(dashboard.stewardMessages).toHaveLength(2);
       expect(dashboard.stewardMessages.map((message: { role: string }) => message.role)).toEqual(["owner", "steward"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("turns an actionable Steward chat message into a goal and dispatches one Worker", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter
+    });
+
+    try {
+      const messageResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward/messages",
+        payload: {
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          body: "Build a deterministic scoring summary panel for the Mahjong app and verify it."
+        }
+      });
+
+      expect(messageResponse.statusCode).toBe(200);
+      expect(worker.starts()).toBe(1);
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const goal = dashboard.goals[0];
+
+      expect(goal).toMatchObject({
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        title: "Build a deterministic scoring summary panel",
+        status: "running"
+      });
+      expect(dashboard.workerSessions).toHaveLength(1);
+      expect(dashboard.workerSessions[0]).toMatchObject({
+        goalId: goal.id,
+        cwd: "/Users/yewang/code/project/mahjong",
+        status: "running"
+      });
+      expect(messageResponse.json().stewardMessage).toMatchObject({
+        role: "steward",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        goalId: goal.id
+      });
+      expect(messageResponse.json().stewardMessage.body).toContain(`Created goal ${goal.id}`);
+      expect(messageResponse.json().stewardMessage.body).toContain("Build a deterministic scoring summary panel");
+      expect(messageResponse.json().stewardMessage.body).toContain("Worker dispatched");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("answers a status-oriented Steward chat message without dispatching a Worker", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter
+    });
+
+    try {
+      const messageResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward/messages",
+        payload: {
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          body: "What is the current recovery status for this workspace?"
+        }
+      });
+
+      expect(messageResponse.statusCode).toBe(200);
+      expect(worker.starts()).toBe(0);
+      expect(messageResponse.json().stewardMessage.body).toContain("0 active goals");
+      expect(messageResponse.json().stewardMessage.body).toContain("Recovery next action");
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      expect(dashboard.goals).toHaveLength(0);
+      expect(dashboard.workerSessions).toHaveLength(0);
+      expect(dashboard.stewardMessages.map((message: { role: string }) => message.role)).toEqual(["owner", "steward"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("records an active goal update without duplicating the existing Worker dispatch", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter
+    });
+
+    try {
+      await app.inject({
+        method: "POST",
+        url: "/api/goals",
+        payload: {
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          title: "Implement Steward loop",
+          body: "Build the first production-ready owner-message loop."
+        }
+      });
+      const before = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      const goalId = before.goals[0].id;
+
+      const messageResponse = await app.inject({
+        method: "POST",
+        url: "/api/steward/messages",
+        payload: {
+          goalId,
+          body: "Correction: keep this goal focused on API loop tests before UI polish."
+        }
+      });
+
+      expect(messageResponse.statusCode).toBe(200);
+      expect(worker.starts()).toBe(1);
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      expect(dashboard.workerSessions).toHaveLength(1);
+      expect(dashboard.decisions).toHaveLength(before.decisions.length + 1);
+      expect(dashboard.decisions.at(-1)).toMatchObject({
+        goalId,
+        workerSessionId: before.workerSessions[0].id,
+        title: "Record owner update for active goal",
+        needsHumanReview: false
+      });
+      expect(dashboard.stewardCheckpoints.at(-1)).toMatchObject({
+        reason: "correction",
+        goalIds: [goalId],
+        workerSessionIds: [before.workerSessions[0].id]
+      });
+      expect(messageResponse.json().stewardMessage.body).toContain("Owner update recorded");
+      expect(messageResponse.json().stewardMessage.body).toContain("Active Worker already exists");
     } finally {
       await app.close();
     }

@@ -9,6 +9,7 @@ import {
 } from "../remote/remoteWorkspaceProvisioner.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
+import { StewardMessageLoop } from "../steward/stewardMessageLoop.js";
 import {
   probeLocalWorkerProcess,
   reconcileWorkerSessions
@@ -197,49 +198,6 @@ function defaultStatePath(): string {
   return join(process.cwd(), ".agent-fleet", "control-plane.json");
 }
 
-function buildDeterministicStewardResponse(
-  dashboard: DashboardData,
-  projectName: string | null,
-  workspacePath: string | null
-): string {
-  const activeGoals = dashboard.goals.filter((goal) => {
-    if (goal.status !== "queued" && goal.status !== "running" && goal.status !== "blocked") {
-      return false;
-    }
-
-    if (projectName !== null && goal.projectName !== projectName) {
-      return false;
-    }
-
-    if (workspacePath !== null && goal.workspacePath !== workspacePath) {
-      return false;
-    }
-
-    return true;
-  });
-  const latestCheckpoint = [...dashboard.stewardCheckpoints].sort(
-    (left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt)
-  )[0];
-  const pieces = [
-    workspacePath === null ? "No workspace is selected for this chat." : `Workspace: ${workspacePath}.`,
-    `I see ${activeGoals.length} active ${activeGoals.length === 1 ? "goal" : "goals"}${
-      projectName === null ? "" : ` for ${projectName}`
-    }.`
-  ];
-
-  if (activeGoals.length > 0) {
-    pieces.push(`Current active goal: ${activeGoals[0].title} (${activeGoals[0].status}).`);
-  }
-
-  if (latestCheckpoint !== undefined) {
-    pieces.push(`Recovery next action: ${latestCheckpoint.nextAction}`);
-  } else {
-    pieces.push("Recovery next action: no checkpoint yet; use dashboard state before dispatching more Worker Agents.");
-  }
-
-  return pieces.join(" ");
-}
-
 function localWorkerDashboard(dashboard: DashboardData): DashboardData {
   return {
     ...dashboard,
@@ -280,6 +238,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     worktreeRunner:
       options.worktreeRunner ?? (materializeWorktrees ? createNodeWorktreeRunner(defaultRepositoryPath) : undefined)
   });
+  const stewardMessageLoop = new StewardMessageLoop({ store, steward });
 
   await app.register(cors, {
     origin(origin, callback) {
@@ -360,40 +319,18 @@ export async function createApp(options: CreateAppOptions = {}) {
     const body = requestBody(request.body);
 
     try {
-      const dashboard = await store.dashboard();
-      const goalId = optionalString(body.goalId, "goalId");
-      const goal = goalId === null ? null : dashboard.goals.find((item) => item.id === goalId);
-
-      if (goalId !== null && goal === undefined) {
-        return reply.code(404).send({
-          error: "Not Found",
-          message: `Goal not found: ${goalId}`
-        });
-      }
-
-      const projectName = goal?.projectName ?? optionalString(body.projectName, "projectName");
-      const workspacePath = goal?.workspacePath ?? optionalString(body.workspacePath, "workspacePath");
-      const ownerMessage = await store.recordStewardMessage({
-        role: "owner",
-        projectName,
-        workspacePath,
-        goalId,
+      return await stewardMessageLoop.acceptOwnerMessage({
+        projectName: optionalString(body.projectName, "projectName"),
+        workspacePath: optionalString(body.workspacePath, "workspacePath"),
+        goalId: optionalString(body.goalId, "goalId"),
         body: requireString(body.body, "body")
       });
-      const stewardDashboard = await store.dashboard();
-      const stewardMessage = await store.recordStewardMessage({
-        role: "steward",
-        projectName,
-        workspacePath,
-        goalId,
-        body: buildDeterministicStewardResponse(stewardDashboard, projectName, workspacePath)
-      });
-
-      return { ownerMessage, stewardMessage };
     } catch (error) {
       if (error instanceof Error) {
-        return reply.code(400).send({
-          error: "Bad Request",
+        const statusCode = error.message.startsWith("Goal not found:") ? 404 : 400;
+
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
           message: error.message
         });
       }
