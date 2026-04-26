@@ -1,4 +1,4 @@
-import type { DashboardData, DecisionCorrection, ExecutionNode, Goal, StewardMessage } from "../shared/types.js";
+import type { DashboardData, DecisionCorrection, ExecutionNode, Goal, StewardMessage, WorkerReport } from "../shared/types.js";
 
 export type { StewardMessage };
 
@@ -12,9 +12,10 @@ export interface ClientExecutionNode extends ExecutionNode {
   note?: string | null;
 }
 
-export interface ClientDashboardData extends Omit<DashboardData, "executionNodes" | "goals"> {
+export interface ClientDashboardData extends Omit<DashboardData, "executionNodes" | "goals" | "workerReports"> {
   executionNodes: ClientExecutionNode[];
   goals: ClientGoal[];
+  workerReports: WorkerReport[];
   stewardMessages: StewardMessage[];
 }
 
@@ -27,6 +28,7 @@ const emptyDashboard: ClientDashboardData = {
   executionNodes: [],
   worktreeAssignments: [],
   stewardCheckpoints: [],
+  workerReports: [],
   agentArtifacts: [],
   reviews: [],
   deliveryReports: [],
@@ -75,6 +77,7 @@ export async function fetchDashboard(): Promise<ClientDashboardData> {
     executionNodes: data.executionNodes ?? [],
     worktreeAssignments: data.worktreeAssignments ?? [],
     stewardCheckpoints: data.stewardCheckpoints ?? [],
+    workerReports: data.workerReports ?? [],
     agentArtifacts: data.agentArtifacts ?? [],
     reviews: data.reviews ?? [],
     deliveryReports: data.deliveryReports ?? [],
@@ -145,4 +148,28 @@ export async function registerExecutionNode(payload: RegisterExecutionNodePayloa
   }
 
   return response.json() as Promise<ExecutionNode>;
+}
+
+async function postOwnerAction(path: string, failureMessage: string): Promise<unknown> {
+  const response = await fetch(path, {
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(failureMessage);
+  }
+
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+export async function runAutonomyTick(): Promise<unknown> {
+  return postOwnerAction("/api/steward/autonomy/run", "Failed to run autonomy tick.");
+}
+
+export async function reconcileRecovery(): Promise<unknown> {
+  return postOwnerAction("/api/recovery/reconcile", "Failed to reconcile recovery.");
 }

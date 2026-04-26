@@ -212,6 +212,10 @@ h3 {
   grid-column: span 5;
 }
 
+.tab-overview .report-panel {
+  grid-column: span 5;
+}
+
 .tab-goals .goals-panel,
 .tab-workers .worker-panel,
 .tab-recovery .recovery-panel {
@@ -456,6 +460,21 @@ h3 {
 .status-failed {
   background: #ffe0d5;
   color: #92351c;
+}
+
+.report-status-blocked {
+  background: #ffe0d5;
+  color: #92351c;
+}
+
+.report-status-done_with_concerns {
+  background: #fff1c7;
+  color: #74520e;
+}
+
+.report-status-done {
+  background: #dff3df;
+  color: #275f30;
 }
 
 .decision-metrics {
@@ -713,6 +732,81 @@ h3 {
   font-weight: 900;
 }
 
+.report-row {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d4dcd8;
+  border-left: 4px solid #2d6f5f;
+  border-radius: 7px;
+  padding: 9px;
+  background: #fbfdfc;
+}
+
+.report-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.report-head h3 {
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+
+.report-head p {
+  margin: 0;
+  color: #61716c;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.report-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+}
+
+.report-facts div {
+  min-width: 0;
+  border: 1px solid #e3e9e6;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: #ffffff;
+}
+
+.report-facts dt,
+.report-facts dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.report-facts dt {
+  color: #61716c;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.report-facts dd {
+  color: #384843;
+  font-weight: 800;
+}
+
+.owner-action-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  border-bottom: 1px solid #e3e9e6;
+  padding: 9px 10px;
+  background: #f7faf8;
+}
+
+.owner-action-strip button {
+  min-height: 34px;
+}
+
 .copy-command {
   display: block;
   width: fit-content;
@@ -943,6 +1037,7 @@ h3 {
   .tab-overview .chat-panel,
   .tab-overview .decision-panel,
   .tab-overview .overview-worker-panel,
+  .tab-overview .report-panel,
   .tab-goals .goals-panel,
   .tab-workers .worker-panel,
   .tab-recovery .recovery-panel,
@@ -959,5 +1054,9 @@ h3 {
   .subpanel + .subpanel {
     border-top: 1px solid #e3e9e6;
     border-left: 0;
+  }
+
+  .report-facts {
+    grid-template-columns: 1fr;
   }
 }

@@ -50,6 +50,23 @@ const dashboard = {
       updatedAt: "2026-04-26T00:00:00.000Z"
     }
   ],
+  workerReports: [
+    {
+      id: "report-1",
+      goalId: "goal-1",
+      workerSessionId: "worker-1",
+      status: "BLOCKED",
+      changedFiles: ["src/client/App.tsx", "src/client/api.ts"],
+      verification: ["npm run test -- src/client/App.test.tsx"],
+      decisions: ["Keep raw Worker chatter collapsed by default."],
+      blockers: ["Owner needs to review stale Worker recovery risk."],
+      nextActions: ["Run recovery reconcile before dispatching more Worker Agents."],
+      needsOwnerReview: true,
+      resumeId: "resume-1",
+      markdown: "RAW_REPORT_MARKDOWN command stdout resume mechanics should stay hidden",
+      createdAt: "2026-04-26T00:03:00.000Z"
+    }
+  ],
   stewardMessages: [
     {
       id: "message-1",
@@ -163,7 +180,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Key Decisions" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Active Worker Summary" })).toBeInTheDocument();
-    expect(screen.getByText("Start Worker Agent for goal")).toBeInTheDocument();
+    expect(screen.getAllByText("Start Worker Agent for goal").length).toBeGreaterThan(0);
     expect(screen.getByText("needs review")).toBeInTheDocument();
     expect(screen.getByText("owner double-check")).toBeInTheDocument();
     const decisionResource = screen.getByRole("group", { name: "Decision resource remote-build-1" });
@@ -215,6 +232,76 @@ describe("App", () => {
     expect(within(workerPanel).getByText("pid 4242")).toBeInTheDocument();
     expect(within(workerPanel).getByText("codexyoloproxy resume resume-1")).toBeInTheDocument();
     expect(within(workerPanel).getByText("raw worker stdout should stay hidden by default")).toBeInTheDocument();
+  });
+
+  it("shows Worker report-derived status and risks without raw report chatter", async () => {
+    render(<App />);
+
+    const reportPanel = await screen.findByRole("region", { name: "Worker Report Summary" });
+    expect(within(reportPanel).getByText("BLOCKED")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("needs owner review")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("Bootstrap agent-fleet")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("Start Worker Agent for goal")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("npm run test -- src/client/App.test.tsx")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("Owner needs to review stale Worker recovery risk.")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("Run recovery reconcile before dispatching more Worker Agents.")).toBeInTheDocument();
+    expect(within(reportPanel).getByText("src/client/App.tsx, src/client/api.ts")).toBeInTheDocument();
+    expect(screen.queryByText("RAW_REPORT_MARKDOWN command stdout resume mechanics should stay hidden")).not.toBeInTheDocument();
+  });
+
+  it("runs autonomy and recovery reconcile actions then refreshes dashboard state", async () => {
+    const autonomyDashboard = {
+      ...dashboard,
+      stewardCheckpoints: [
+        {
+          id: "checkpoint-autonomy",
+          reason: "manual",
+          summary: "Autonomy reconcile checked 1 Worker session and updated 1.",
+          nextAction: "Review stale Worker sessions before dispatching more work.",
+          goalIds: ["goal-1"],
+          workerSessionIds: ["worker-1"],
+          createdAt: "2026-04-26T00:04:00.000Z"
+        }
+      ]
+    };
+    const reconciledDashboard = {
+      ...autonomyDashboard,
+      stewardCheckpoints: [
+        ...autonomyDashboard.stewardCheckpoints,
+        {
+          id: "checkpoint-reconcile",
+          reason: "recovery",
+          summary: "Recovery reconcile checked 1 Worker session and updated 0.",
+          nextAction: "Continue monitoring Worker sessions.",
+          goalIds: ["goal-1"],
+          workerSessionIds: ["worker-1"],
+          createdAt: "2026-04-26T00:05:00.000Z"
+        }
+      ]
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(dashboard))
+      .mockResolvedValueOnce(jsonResponse({ result: { checked: 1, updated: 1 } }))
+      .mockResolvedValueOnce(jsonResponse(autonomyDashboard))
+      .mockResolvedValueOnce(jsonResponse({ checked: 1, updated: 0 }))
+      .mockResolvedValueOnce(jsonResponse(reconciledDashboard));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Recovery" }));
+    await user.click(screen.getByRole("button", { name: "Run autonomy tick" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/steward/autonomy/run", expect.objectContaining({ method: "POST" }));
+    expect(await screen.findByText("Autonomy reconcile checked 1 Worker session and updated 1.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reconcile recovery" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/recovery/reconcile", expect.objectContaining({ method: "POST" }));
+    expect(await screen.findByText("Recovery reconcile checked 1 Worker session and updated 0.")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/dashboard");
   });
 
   it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
