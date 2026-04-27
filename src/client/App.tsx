@@ -15,6 +15,13 @@ import {
   runAutonomyTick,
   sendStewardConversationMessage
 } from "./api.js";
+import {
+  buildCockpitBrief,
+  buildInboxItems,
+  buildProjectSummaries,
+  type InboxItem,
+  type ProjectSummary
+} from "./viewModels/cockpit.js";
 
 const emptyDashboard: ClientDashboardData = {
   goals: [],
@@ -166,19 +173,27 @@ function reportFileSummary(report: WorkerReport): string {
   return displayText(report.changedFiles.slice(0, 3).join(", "));
 }
 
-type DashboardTab = "overview" | "goals" | "workers" | "recovery" | "resources";
+function countLabel(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+type DashboardTab = "chat" | "projects" | "goals" | "inbox" | "workers" | "recovery" | "remote" | "memory" | "help";
 
 const dashboardTabs: Array<{ id: DashboardTab; label: string }> = [
-  { id: "overview", label: "Overview" },
+  { id: "chat", label: "Chat" },
+  { id: "projects", label: "Projects" },
+  { id: "inbox", label: "Inbox" },
   { id: "goals", label: "Goals" },
   { id: "workers", label: "Workers" },
   { id: "recovery", label: "Recovery" },
-  { id: "resources", label: "Resources" }
+  { id: "remote", label: "Remote" },
+  { id: "memory", label: "Memory" },
+  { id: "help", label: "Help" }
 ];
 
 export function App() {
   const [dashboard, setDashboard] = useState<ClientDashboardData>(emptyDashboard);
-  const [selectedTab, setSelectedTab] = useState<DashboardTab>("overview");
+  const [selectedTab, setSelectedTab] = useState<DashboardTab>("chat");
   const [projectName, setProjectName] = useState("");
   const [workspacePath, setWorkspacePath] = useState("");
   const [goalTitle, setGoalTitle] = useState("");
@@ -216,6 +231,7 @@ export function App() {
     [dashboard.workerSessions]
   );
   const remoteNodes = useMemo(() => dashboard.executionNodes.filter((node) => node.kind === "remote"), [dashboard.executionNodes]);
+  const remoteReadyCount = useMemo(() => remoteNodes.filter((node) => node.status === "ready").length, [remoteNodes]);
   const recentEvents = useMemo(() => [...dashboard.events].slice(-8).reverse(), [dashboard.events]);
   const visibleWorkerSessions = useMemo(
     () => dashboard.workerSessions.filter((session) => isVisibleWorkerSession(session)),
@@ -252,6 +268,12 @@ export function App() {
   const recentWorkerReports = useMemo(
     () => [...dashboard.workerReports].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 5),
     [dashboard.workerReports]
+  );
+  const inboxItems = useMemo(() => buildInboxItems(dashboard), [dashboard]);
+  const projectSummaries = useMemo(() => buildProjectSummaries(dashboard, inboxItems), [dashboard, inboxItems]);
+  const currentBrief = useMemo(
+    () => buildCockpitBrief(dashboard, projectSummaries, inboxItems, { projectName, workspacePath }),
+    [dashboard, inboxItems, projectName, projectSummaries, workspacePath]
   );
   const memoryCount = dashboard.memories.length;
   const goalCount = dashboard.goals.length;
@@ -459,48 +481,44 @@ export function App() {
     }
   }
 
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <p className="eyebrow">Steward Control Plane</p>
-          <h1>agent-fleet</h1>
-        </div>
-        <button className="secondary-button" onClick={() => void refresh()} type="button">
-          Refresh
-        </button>
-      </header>
+  function tabBadgeCount(tab: DashboardTab): number | null {
+    if (tab === "chat") {
+      return ownerFacingMessages.length;
+    }
 
-      {error ? (
-        <section className="error-banner" role="alert">
-          {error}
-        </section>
-      ) : null}
+    if (tab === "projects") {
+      return projectSummaries.length;
+    }
 
-      <nav aria-label="Dashboard sections" className="dashboard-tabs" role="tablist">
-        {dashboardTabs.map((tab) => (
-          <button
-            aria-controls={`${tab.id}-panel`}
-            aria-selected={selectedTab === tab.id}
-            className={selectedTab === tab.id ? "tab-button active-tab" : "tab-button"}
-            id={`${tab.id}-tab`}
-            key={tab.id}
-            onClick={() => setSelectedTab(tab.id)}
-            role="tab"
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+    if (tab === "inbox") {
+      return inboxItems.length;
+    }
 
-      <section
-        aria-labelledby={`${selectedTab}-tab`}
-        className="tab-panel"
-        id={`${selectedTab}-panel`}
-        role="tabpanel"
-      >
-      <section className="metric-grid" aria-label="supervision metrics" hidden={selectedTab !== "overview"}>
+    if (tab === "workers") {
+      return visibleWorkerSessions.length;
+    }
+
+    if (tab === "memory") {
+      return memoryCount;
+    }
+
+    return null;
+  }
+
+  function renderTopContext() {
+    return (
+      <section aria-label="Steward context" className="top-context">
+        <span>{countLabel(goalCount, "goal")}</span>
+        <span>{runningWorkerCount === 1 ? "1 Worker running" : `${runningWorkerCount} Workers running`}</span>
+        <span>{countLabel(humanReviewCount, "review")}</span>
+        <span>{countLabel(remoteReadyCount, "remote ready", "remote ready")}</span>
+      </section>
+    );
+  }
+
+  function renderMetricGrid() {
+    return (
+      <section className="metric-grid" aria-label="supervision metrics" hidden={selectedTab === "chat"}>
         <article className="metric-tile">
           <span>{humanReviewCount}</span>
           <p>Human Review</p>
@@ -522,51 +540,112 @@ export function App() {
           <p>Worker Sessions</p>
         </article>
       </section>
+    );
+  }
 
-      <section className={`dashboard-grid tab-${selectedTab}`} aria-label="agent-fleet dashboard">
-        <section className="panel intake-panel" hidden={selectedTab !== "overview"}>
-          <div className="panel-heading">
-            <p className="eyebrow">Human Intent</p>
-            <h2>Steward Intake</h2>
-          </div>
-          <form className="stack-form" onSubmit={(event) => void submitGoal(event)}>
-            <input
-              aria-label="Project"
-              onChange={(event) => setProjectName(event.target.value)}
-              placeholder="Project"
-              type="text"
-              value={projectName}
-            />
-            <input
-              aria-label="Target directory"
-              aria-describedby="target-directory-hint"
-              onChange={(event) => setWorkspacePath(event.target.value)}
-              placeholder="~/code/project/target"
-              required
-              type="text"
-              value={workspacePath}
-            />
-            <p className="field-hint" id="target-directory-hint">
-              External workspace path required
+  function renderCurrentBriefPanel() {
+    return (
+      <section aria-label="Current Brief" className="panel console-status-panel">
+        <div className="panel-heading">
+          <p className="eyebrow">Steward Cockpit</p>
+          <h2>Current Brief</h2>
+        </div>
+        <div className="console-status-list">
+          <article className="console-status-card">
+            <span>Project</span>
+            <strong>{displayText(currentBrief.projectName)}</strong>
+            <p>{currentBrief.workspacePath === null ? "No workspace selected" : displayPath(currentBrief.workspacePath)}</p>
+          </article>
+          <article className="console-status-card">
+            <span>Active Goal</span>
+            <strong>{currentBrief.activeGoalTitle === "No active goal selected." ? "-" : "1"}</strong>
+            <p>{displayText(currentBrief.activeGoalTitle)}</p>
+          </article>
+          <article className="console-status-card">
+            <span>Human Review</span>
+            <strong>{currentBrief.humanReviewCount}</strong>
+            <p>
+              {currentBrief.humanReviewCount === 1
+                ? "1 decision for review"
+                : `${currentBrief.humanReviewCount} decisions for review`}
             </p>
-            <input
-              aria-label="Goal title"
-              onChange={(event) => setGoalTitle(event.target.value)}
-              placeholder="Goal title"
-              type="text"
-              value={goalTitle}
-            />
-            <textarea
-              aria-label="Goal body"
-              onChange={(event) => setGoalBody(event.target.value)}
-              placeholder="Goal, constraints, acceptance criteria"
-              value={goalBody}
-            />
-            <button type="submit">Start Steward</button>
-          </form>
+          </article>
+          <article className="console-status-card">
+            <span>Running Workers</span>
+            <strong>{currentBrief.runningWorkerCount}</strong>
+            <p>{currentBrief.runningWorkerCount === 1 ? "1 Worker running" : `${currentBrief.runningWorkerCount} Workers running`}</p>
+          </article>
+          <article className="console-status-card">
+            <span>Remote Capacity</span>
+            <strong>{currentBrief.remoteReadyCount}</strong>
+            <p>
+              {currentBrief.remoteReadyCount === 1
+                ? "1 remote node ready"
+                : `${currentBrief.remoteReadyCount} remote nodes ready`}
+            </p>
+          </article>
+        </div>
+        <section className="console-brief" aria-label="Next safe action">
+          <div className="console-brief-heading">
+            <span>Next safe action</span>
+            {inboxItems.length > 0 ? <strong className="pill review-pill">{inboxItems.length} queued</strong> : null}
+          </div>
+          <p>{displayText(currentBrief.nextSafeAction)}</p>
         </section>
+      </section>
+    );
+  }
 
-        <section className="panel chat-panel" hidden={selectedTab !== "overview"}>
+  function renderGoalIntakePanel() {
+    return (
+      <section className="panel intake-panel" hidden={selectedTab !== "goals"}>
+        <div className="panel-heading">
+          <p className="eyebrow">Human Intent</p>
+          <h2>Steward Intake</h2>
+        </div>
+        <form className="stack-form" onSubmit={(event) => void submitGoal(event)}>
+          <input
+            aria-label={selectedTab === "goals" ? "Project" : undefined}
+            onChange={(event) => setProjectName(event.target.value)}
+            placeholder="Project"
+            type="text"
+            value={projectName}
+          />
+          <input
+            aria-label={selectedTab === "goals" ? "Target directory" : undefined}
+            aria-describedby="target-directory-hint"
+            onChange={(event) => setWorkspacePath(event.target.value)}
+            placeholder="~/code/project/target"
+            required
+            type="text"
+            value={workspacePath}
+          />
+          <p className="field-hint" id="target-directory-hint">
+            {selectedTab === "goals" ? "External workspace path required" : ""}
+          </p>
+          <input
+            aria-label={selectedTab === "goals" ? "Goal title" : undefined}
+            onChange={(event) => setGoalTitle(event.target.value)}
+            placeholder="Goal title"
+            type="text"
+            value={goalTitle}
+          />
+          <textarea
+            aria-label={selectedTab === "goals" ? "Goal body" : undefined}
+            onChange={(event) => setGoalBody(event.target.value)}
+            placeholder="Goal, constraints, acceptance criteria"
+            value={goalBody}
+          />
+          <button type="submit">Start Steward</button>
+        </form>
+      </section>
+    );
+  }
+
+  function renderStewardConsole() {
+    return (
+      <section aria-label="Steward console" className="steward-console" hidden={selectedTab !== "chat"}>
+        <section className="panel chat-panel">
           <div className="panel-heading conversation-heading">
             <div>
               <p className="eyebrow">Durable Conversation</p>
@@ -633,8 +712,28 @@ export function App() {
             ) : null}
           </div>
           <form className="stack-form chat-form" onSubmit={(event) => void submitStewardMessage(event)}>
+            <div className="chat-context-grid">
+              <input
+                aria-label={selectedTab === "chat" ? "Project" : undefined}
+                onChange={(event) => setProjectName(event.target.value)}
+                placeholder="Project"
+                type="text"
+                value={projectName}
+              />
+              <input
+                aria-label={selectedTab === "chat" ? "Target directory" : undefined}
+                aria-describedby="chat-target-directory-hint"
+                onChange={(event) => setWorkspacePath(event.target.value)}
+                placeholder="~/code/project/target"
+                type="text"
+                value={workspacePath}
+              />
+            </div>
+            <p className="field-hint" id="chat-target-directory-hint">
+              {selectedTab === "chat" ? "External workspace path required" : ""}
+            </p>
             <textarea
-              aria-label="Message Steward"
+              aria-label={selectedTab === "chat" ? "Message Steward" : undefined}
               onChange={(event) => setStewardMessageBody(event.target.value)}
               placeholder="Message the Steward Agent"
               value={stewardMessageBody}
@@ -642,6 +741,193 @@ export function App() {
             <button type="submit">Send to Steward</button>
           </form>
         </section>
+        {renderCurrentBriefPanel()}
+      </section>
+    );
+  }
+
+  function renderProjectsPanel() {
+    return (
+      <section className="panel projects-panel" hidden={selectedTab !== "projects"}>
+        <div className="panel-heading">
+          <p className="eyebrow">Multi-project cockpit</p>
+          <h2>Projects</h2>
+        </div>
+        <div className="item-list scroll-list project-list">
+          {projectSummaries.length === 0 ? (
+            <p className="empty-copy">No projects accepted yet.</p>
+          ) : (
+            projectSummaries.map((project) => renderProjectCard(project))
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  function renderProjectCard(project: ProjectSummary) {
+    const latestActiveGoal = project.goals.find((goal) => goal.status === "running" || goal.status === "blocked") ?? project.goals[0] ?? null;
+
+    return (
+      <article aria-label={`Project ${project.projectName}`} className="project-card" key={project.id} role="group">
+        <div className="project-card-head">
+          <div>
+            <h3>{displayText(project.projectName)}</h3>
+            {project.workspacePath ? <p>{displayPath(project.workspacePath)}</p> : <p>No workspace recorded.</p>}
+          </div>
+          <div className="badge-cluster">
+            <span className="pill">{countLabel(project.activeGoalCount, "active goal")}</span>
+            <span className="pill">
+              {project.runningWorkerCount === 1 ? "1 running Worker" : `${project.runningWorkerCount} running Workers`}
+            </span>
+          </div>
+        </div>
+        <dl className="project-facts">
+          <div>
+            <dt>active goal</dt>
+            <dd>{latestActiveGoal === null ? "No active goal." : displayText(latestActiveGoal.title)}</dd>
+          </div>
+          <div>
+            <dt>latest decision</dt>
+            <dd>{project.latestDecisionTitle === null ? "No Steward decision yet." : displayText(project.latestDecisionTitle)}</dd>
+          </div>
+          <div>
+            <dt>latest Worker report</dt>
+            <dd>
+              {project.latestWorkerReportStatus === null
+                ? "No Worker report yet."
+                : `${project.latestWorkerReportStatus}: ${displayText(project.latestWorkerReportTitle ?? "No report title.")}`}
+            </dd>
+          </div>
+          <div>
+            <dt>next owner action</dt>
+            <dd>{displayText(project.nextOwnerAction)}</dd>
+          </div>
+        </dl>
+      </article>
+    );
+  }
+
+  function renderInboxPanel() {
+    return (
+      <section className="panel inbox-panel" hidden={selectedTab !== "inbox"}>
+        <div className="panel-heading">
+          <p className="eyebrow">Owner action queue</p>
+          <h2>Owner Inbox</h2>
+        </div>
+        <div className="item-list scroll-list inbox-list">
+          {inboxItems.length === 0 ? (
+            <p className="empty-copy">No owner-visible actions queued.</p>
+          ) : (
+            inboxItems.map((item) => renderInboxItem(item))
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  function renderInboxItem(item: InboxItem) {
+    const goal = goalById.get(item.goalId) ?? null;
+
+    return (
+      <article className="inbox-row" key={item.id}>
+        <div className="inbox-row-head">
+          <div>
+            <h3>{displayText(item.title)}</h3>
+            <p>{displayText(item.summary)}</p>
+          </div>
+          <div className="badge-cluster">
+            <span className="pill">{item.kind === "decision" ? "Steward decision" : "Worker report"}</span>
+            {item.risk ? <span className={`pill risk-${item.risk}`}>{item.risk}</span> : null}
+            <span className="pill review-pill">{item.reason}</span>
+          </div>
+        </div>
+        <dl className="inbox-facts">
+          <div>
+            <dt>project</dt>
+            <dd>{goal === null ? item.goalId : displayText(goal.projectName)}</dd>
+          </div>
+          <div>
+            <dt>workspace</dt>
+            <dd>{goal?.workspacePath ? displayPath(goal.workspacePath) : "No workspace recorded."}</dd>
+          </div>
+          <div>
+            <dt>goal</dt>
+            <dd>{goal === null ? item.goalId : displayText(goal.title)}</dd>
+          </div>
+          <div>
+            <dt>status</dt>
+            <dd>{item.status}</dd>
+          </div>
+        </dl>
+      </article>
+    );
+  }
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <span className="brand-mark" aria-hidden="true">
+            AF
+          </span>
+          <div>
+            <p className="eyebrow">Steward Control Plane</p>
+            <h1>agent-fleet</h1>
+          </div>
+        </div>
+        <nav aria-label="Control plane sections" className="sidebar-nav">
+          <div aria-orientation="vertical" role="tablist">
+            {dashboardTabs.map((tab) => (
+              <button
+                aria-label={tab.label}
+                aria-controls={`${tab.id}-panel`}
+                aria-selected={selectedTab === tab.id}
+                className={selectedTab === tab.id ? "tab-button active-tab" : "tab-button"}
+                id={`${tab.id}-tab`}
+                key={tab.id}
+                onClick={() => setSelectedTab(tab.id)}
+                role="tab"
+                type="button"
+              >
+                <span>{tab.label}</span>
+                {tabBadgeCount(tab.id) === null ? null : <strong>{tabBadgeCount(tab.id)}</strong>}
+              </button>
+            ))}
+          </div>
+        </nav>
+      </aside>
+
+      <section className="content-shell">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">{dashboardTabs.find((tab) => tab.id === selectedTab)?.label ?? "Dashboard"}</p>
+            <p className="topbar-title">{selectedTab === "chat" ? "Steward conversation" : "agent-fleet control plane"}</p>
+          </div>
+          {renderTopContext()}
+          <button className="secondary-button" onClick={() => void refresh()} type="button">
+            Refresh
+          </button>
+        </header>
+
+        {error ? (
+          <section className="error-banner" role="alert">
+            {error}
+          </section>
+        ) : null}
+
+        <section
+          aria-labelledby={`${selectedTab}-tab`}
+          className="tab-panel"
+          id={`${selectedTab}-panel`}
+          role="tabpanel"
+        >
+          {renderMetricGrid()}
+
+          <section className={`dashboard-grid tab-${selectedTab}`} aria-label="agent-fleet dashboard">
+            {renderGoalIntakePanel()}
+            {renderStewardConsole()}
+            {renderProjectsPanel()}
+            {renderInboxPanel()}
 
         <section className="panel goals-panel" hidden={selectedTab !== "goals"}>
           <div className="panel-heading compact-heading">
@@ -673,10 +959,10 @@ export function App() {
           </div>
         </section>
 
-        <section className="panel decision-panel" hidden={selectedTab !== "overview"}>
+        <section className="panel decision-panel" hidden={selectedTab !== "inbox"}>
           <div className="panel-heading">
-            <p className="eyebrow">Owner Review</p>
-            <h2>Key Decisions</h2>
+            <p className="eyebrow">Decision review</p>
+            <h2>Steward Decisions</h2>
           </div>
           <div className="item-list scroll-list decision-list">
             {keyDecisions.length === 0 ? (
@@ -778,7 +1064,7 @@ export function App() {
           </div>
         </section>
 
-        <section className="panel overview-worker-panel" hidden={selectedTab !== "overview"}>
+        <section className="panel overview-worker-panel" hidden={true}>
           <div className="panel-heading">
             <p className="eyebrow">Operations Summary</p>
             <h2>Active Worker Summary</h2>
@@ -811,7 +1097,7 @@ export function App() {
         <section
           aria-label="Worker Report Summary"
           className="panel report-panel"
-          hidden={selectedTab !== "overview"}
+          hidden={selectedTab !== "inbox"}
         >
           <div className="panel-heading">
             <p className="eyebrow">Worker Reports</p>
@@ -1126,7 +1412,7 @@ export function App() {
           </div>
         </section>
 
-        <details className="panel node-panel secondary-panel" hidden={selectedTab !== "resources"} open>
+        <details className="panel node-panel secondary-panel" hidden={selectedTab !== "remote"} open>
           <summary>
             <span className="eyebrow">Remote Capacity</span>
             <h2>Remote Nodes</h2>
@@ -1237,7 +1523,7 @@ export function App() {
           </div>
         </details>
 
-        <details className="panel memory-panel secondary-panel" hidden={selectedTab !== "resources"} open>
+        <details className="panel memory-panel secondary-panel" hidden={selectedTab !== "memory"} open>
           <summary>
             <span className="eyebrow">Learning</span>
             <h2>Memory</h2>
@@ -1258,6 +1544,25 @@ export function App() {
             )}
           </div>
         </details>
+
+        <section className="panel docs-panel" hidden={selectedTab !== "help"}>
+          <div className="panel-heading">
+            <p className="eyebrow">Operator Handbook</p>
+            <h2>Help</h2>
+          </div>
+          <div className="docs-links">
+            <a href="https://ikingye.github.io/agent-fleet/" rel="noreferrer">
+              GitHub Pages
+            </a>
+            <a href="https://github.com/ikingye/agent-fleet/tree/main/docs" rel="noreferrer">
+              Source docs
+            </a>
+            <a href="https://github.com/ikingye/agent-fleet" rel="noreferrer">
+              GitHub repository
+            </a>
+          </div>
+        </section>
+      </section>
       </section>
       </section>
     </main>

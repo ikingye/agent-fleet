@@ -188,26 +188,26 @@ describe("App", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "agent-fleet" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Overview" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Chat" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Projects" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Goals" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Inbox" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Workers" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Recovery" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Resources" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Steward Intake" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Remote" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Memory" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Help" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Docs" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("navigation", { name: "Control plane sections" })).toHaveClass("sidebar-nav");
+    expect(screen.getByRole("region", { name: "Steward console" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Current Brief" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Steward context" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Key Decisions" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 2, name: "Active Worker Summary" })).toBeInTheDocument();
-    expect(screen.getAllByText("Start Worker Agent for goal").length).toBeGreaterThan(0);
-    expect(screen.getByText("needs review")).toBeInTheDocument();
-    expect(screen.getByText("owner double-check")).toBeInTheDocument();
-    const decisionResource = screen.getByRole("group", { name: "Decision resource remote-build-1" });
-    expect(within(decisionResource).getByText("remote-build-1")).toBeInTheDocument();
-    expect(within(decisionResource).getByText("ready")).toBeInTheDocument();
-    expect(within(decisionResource).getByText("2 slots")).toBeInTheDocument();
-    expect(within(decisionResource).getByText("remote, linux, high-cpu")).toBeInTheDocument();
-    expect(within(decisionResource).getByText("https://proxy.agent-fleet.example")).toBeInTheDocument();
-    expect(within(decisionResource).getByText("ready for remote verification")).toBeInTheDocument();
-    expect(screen.getAllByText("1 running").length).toBeGreaterThan(0);
+    expect(screen.getByText("Please keep Worker execution durable.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Steward Intake" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Key Decisions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Active Worker Summary" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "Worker Operations" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "Recovery Context" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { level: 2, name: "Remote Nodes" })).not.toBeInTheDocument();
@@ -220,8 +220,132 @@ describe("App", () => {
     expect(screen.queryByText(/Mahjong Arena/i)).not.toBeInTheDocument();
   });
 
-  it("makes external workspace context explicit in Steward intake", async () => {
+  it("presents Chat as a Steward console with concise status instead of raw Worker detail", async () => {
     render(<App />);
+
+    const consoleRegion = await screen.findByRole("region", { name: "Steward console" });
+    const statusPanel = within(consoleRegion).getByRole("region", { name: "Current Brief" });
+
+    expect(within(consoleRegion).getByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Current Brief")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("/workspaces/agent-fleet")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Bootstrap agent-fleet")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("1 decision for review")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("1 Worker running")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("1 remote node ready")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Next safe action")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Run recovery reconcile before dispatching more Worker Agents.")).toBeInTheDocument();
+    expect(screen.queryByText("raw worker stdout should stay hidden by default")).not.toBeInTheDocument();
+    expect(screen.queryByText("codexyoloproxy resume resume-1")).not.toBeInTheDocument();
+  });
+
+  it("switches from Chat to Inbox through the left sidebar and shows the owner action queue", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Steward Chat" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { level: 2, name: "Owner Inbox" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Inbox" }));
+
+    expect(screen.getByRole("tab", { name: "Inbox" })).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("heading", { level: 2, name: "Owner Inbox" })).toBeInTheDocument();
+    expect(screen.getAllByText("Start Worker Agent for goal").length).toBeGreaterThan(0);
+    expect(screen.getByText("needs review")).toBeInTheDocument();
+    expect(screen.getByText("owner double-check")).toBeInTheDocument();
+    expect(screen.getByText("Worker report needs owner review")).toBeInTheDocument();
+    expect(screen.getAllByText("Owner needs to review stale Worker recovery risk.").length).toBeGreaterThan(0);
+    const decisionResource = screen.getByRole("group", { name: "Decision resource remote-build-1" });
+    expect(within(decisionResource).getByText("remote-build-1")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("ready")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("2 slots")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("remote, linux, high-cpu")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("https://proxy.agent-fleet.example")).toBeInTheDocument();
+    expect(within(decisionResource).getByText("ready for remote verification")).toBeInTheDocument();
+  });
+
+  it("shows Projects grouped by project and workspace with next owner action", async () => {
+    const multiProjectDashboard = {
+      ...dashboard,
+      goals: [
+        dashboard.goals[0],
+        {
+          id: "goal-2",
+          projectName: "mahjong",
+          workspacePath: exampleOwnerMahjongWorkspace,
+          title: "Ship Mahjong playable MVP",
+          body: "Keep Mahjong implementation in its own workspace.",
+          status: "running",
+          createdAt: "2026-04-26T00:04:00.000Z",
+          updatedAt: "2026-04-26T00:04:00.000Z"
+        }
+      ],
+      workerSessions: [
+        dashboard.workerSessions[0],
+        {
+          ...dashboard.workerSessions[0],
+          id: "worker-2",
+          goalId: "goal-2",
+          decisionId: "decision-2",
+          cwd: `${exampleOwnerMahjongWorkspace}/.worktrees/playable-mvp`,
+          resumeId: "resume-2"
+        }
+      ],
+      decisions: [
+        dashboard.decisions[0],
+        {
+          ...dashboard.decisions[0],
+          id: "decision-2",
+          goalId: "goal-2",
+          workerSessionId: "worker-2",
+          title: "Review Mahjong release scope",
+          rationale: "Release and merge scope needs owner visibility.",
+          risk: "high",
+          confidence: 0.64,
+          needsHumanReview: true,
+          actionsJson: "[\"Review release scope\"]",
+          createdAt: "2026-04-26T00:05:00.000Z"
+        }
+      ],
+      workerReports: [
+        dashboard.workerReports[0],
+        {
+          ...dashboard.workerReports[0],
+          id: "report-2",
+          goalId: "goal-2",
+          workerSessionId: "worker-2",
+          status: "DONE_WITH_CONCERNS",
+          blockers: [],
+          nextActions: ["Owner should double-check release scope before merge."],
+          markdown: "release merge safety review",
+          createdAt: "2026-04-26T00:06:00.000Z"
+        }
+      ]
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(multiProjectDashboard)));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Projects" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Projects" })).toBeInTheDocument();
+    const mahjongProject = screen.getByRole("group", { name: "Project mahjong" });
+    expect(within(mahjongProject).getByText("~/code/project/mahjong")).toBeInTheDocument();
+    expect(within(mahjongProject).getByText("Ship Mahjong playable MVP")).toBeInTheDocument();
+    expect(within(mahjongProject).getByText("1 active goal")).toBeInTheDocument();
+    expect(within(mahjongProject).getByText("1 running Worker")).toBeInTheDocument();
+    expect(within(mahjongProject).getByText("Review Mahjong release scope")).toBeInTheDocument();
+    expect(within(mahjongProject).getByText("Owner should double-check release scope before merge.")).toBeInTheDocument();
+    expect(screen.queryByText((text) => text.includes(exampleOwnerMahjongWorkspace))).not.toBeInTheDocument();
+    expect(screen.queryByText(/Mahjong Arena/i)).not.toBeInTheDocument();
+  });
+
+  it("makes external workspace context explicit in Steward intake", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Goals" }));
 
     const targetDirectory = await screen.findByLabelText("Target directory");
     expect(targetDirectory).toBeRequired();
@@ -229,7 +353,7 @@ describe("App", () => {
     expect(screen.getByText("External workspace path required")).toBeInTheDocument();
     expect(screen.getByLabelText("Project")).toBeInTheDocument();
     expect(screen.getByLabelText("Goal body")).toBeInTheDocument();
-    expect(screen.getByLabelText("Message Steward")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Message Steward")).not.toBeInTheDocument();
   });
 
   it("shows Worker session debug details only after expanding operations", async () => {
@@ -252,7 +376,10 @@ describe("App", () => {
   });
 
   it("shows Worker report-derived status and risks without raw report chatter", async () => {
+    const user = userEvent.setup();
     render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Inbox" }));
 
     const reportPanel = await screen.findByRole("region", { name: "Worker Report Summary" });
     expect(within(reportPanel).getByText("BLOCKED")).toBeInTheDocument();
@@ -342,9 +469,11 @@ describe("App", () => {
   it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
     render(<App />);
 
-    expect(await screen.findByText("Human Review")).toBeInTheDocument();
-    expect(screen.getByText("Running Workers")).toBeInTheDocument();
-    expect(screen.getByText("Memory Items")).toBeInTheDocument();
+    const statusPanel = await screen.findByRole("region", { name: "Current Brief" });
+
+    expect(within(statusPanel).getByText("Human Review")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Running Workers")).toBeInTheDocument();
+    expect(within(statusPanel).getByText("Remote Capacity")).toBeInTheDocument();
   });
 
   it("renders worktree assignments and remote execution nodes", async () => {
@@ -357,7 +486,7 @@ describe("App", () => {
     expect(screen.getByText("steward/dashboard-execution")).toBeInTheDocument();
     expect(screen.getByText("/worktrees/agent-fleet-dashboard-execution")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Resources" }));
+    await user.click(screen.getByRole("tab", { name: "Remote" }));
 
     expect(screen.getByRole("heading", { level: 2, name: "Remote Nodes" })).toBeInTheDocument();
     const remoteNodesPanel = screen.getByRole("heading", { level: 2, name: "Remote Nodes" }).closest("details");
@@ -366,6 +495,20 @@ describe("App", () => {
     expect(within(remoteNodesPanel as HTMLElement).getByText("https://proxy.agent-fleet.example")).toBeInTheDocument();
     expect(within(remoteNodesPanel as HTMLElement).getByText("remote, linux, high-cpu")).toBeInTheDocument();
     expect(within(remoteNodesPanel as HTMLElement).getByText("2")).toBeInTheDocument();
+  });
+
+  it("keeps docs links under Help instead of a primary Docs tab", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    expect(await screen.findByRole("tab", { name: "Help" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Docs" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Help" }));
+
+    expect(await screen.findByRole("heading", { level: 2, name: "Help" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "GitHub Pages" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Source docs" })).toBeInTheDocument();
   });
 
   it("registers a remote execution node and refreshes the dashboard", async () => {
@@ -413,7 +556,7 @@ describe("App", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("tab", { name: "Resources" }));
+    await user.click(await screen.findByRole("tab", { name: "Remote" }));
 
     await user.type(await screen.findByLabelText("Remote node name"), "mac-mini-builder");
     await user.type(screen.getByLabelText("SSH host"), "worker@remote-worker.example");
@@ -645,6 +788,8 @@ describe("App", () => {
 
     render(<App />);
 
+    await user.click(await screen.findByRole("tab", { name: "Goals" }));
+
     await user.type(await screen.findByLabelText("Project"), "agent-fleet");
     await user.type(screen.getByLabelText("Target directory"), "/workspaces/mahjong");
     await user.type(screen.getByLabelText("Goal title"), "Bootstrap agent-fleet");
@@ -716,10 +861,10 @@ describe("App", () => {
 
     expect((await screen.findAllByText("~/code/project/mahjong")).length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("tab", { name: "Goals" }));
-    expect(await screen.findAllByText("~/code/project/mahjong")).toHaveLength(3);
+    expect((await screen.findAllByText("~/code/project/mahjong")).length).toBeGreaterThanOrEqual(3);
     await userEvent.click(screen.getByRole("tab", { name: "Recovery" }));
     expect(screen.getAllByText("~/code/project/mahjong/.worktrees/worker-1").length).toBeGreaterThanOrEqual(2);
-    await userEvent.click(screen.getByRole("tab", { name: "Resources" }));
+    await userEvent.click(screen.getByRole("tab", { name: "Remote" }));
     expect(screen.getByText("~/code/project/mahjong/.worktrees")).toBeInTheDocument();
     expect(screen.queryByText((text) => text.includes(exampleOwnerMahjongWorkspace))).not.toBeInTheDocument();
   });
@@ -764,7 +909,7 @@ describe("App", () => {
 
       expect(await screen.findByText("Check ~/code/project/mahjong and ~/work/mahjong.")).toBeInTheDocument();
       await userEvent.click(screen.getByRole("tab", { name: "Goals" }));
-      expect(await screen.findByText("~/code/project/mahjong")).toBeInTheDocument();
+      expect((await screen.findAllByText("~/code/project/mahjong")).length).toBeGreaterThan(0);
       expect(screen.getByText("Review ~/work/mahjong before dispatch.")).toBeInTheDocument();
       await userEvent.click(screen.getByRole("tab", { name: "Recovery" }));
       expect(screen.getAllByText("~/code/project/agent-fleet").length).toBeGreaterThan(0);
@@ -1037,6 +1182,8 @@ describe("App", () => {
     const user = userEvent.setup();
 
     render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Inbox" }));
 
     await user.type(await screen.findByLabelText("Correction for Start Worker Agent for goal"), "Escalate irreversible merge decisions to me.");
     await user.click(screen.getByRole("button", { name: "Send correction" }));
