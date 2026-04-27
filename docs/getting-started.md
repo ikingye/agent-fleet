@@ -11,15 +11,30 @@ This guide brings up the local control plane, verifies the repository, opens the
 
 For API-launched Workers, prefer a real executable command over an interactive shell alias. Aliases can depend on a TTY and fail when launched by the server process.
 
-## Install
+## Install From Source
 
 ```sh
+git clone https://github.com/ikingye/agent-fleet.git
+cd agent-fleet
 npm ci
 npm run check
 npm run build
 ```
 
-The repository is intentionally private in v0.1.0. Do not prepare npm publishing.
+This repository is public under Apache-2.0, but its package remains `private: true` and is not published to npm. Do not run `npm install agent-fleet`: the public npm package named `agent-fleet` is a different project. Use the source checkout until the owner chooses a package name and publishing plan.
+
+After building, either link the local CLI:
+
+```sh
+npm link
+steward status
+```
+
+Or run it directly without a global link:
+
+```sh
+node dist/cli/main.js status
+```
 
 ## Configure A Worker Command
 

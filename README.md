@@ -4,7 +4,7 @@ agent-fleet is a public Steward Agent control plane for coordinating coding agen
 
 agent-fleet is the compact management system. Business project UI, product code, and project-specific implementation should stay in the target project workspace, not be embedded in this repository or dashboard.
 
-The repository is public under Apache-2.0. The package remains `private: true` and is not published to npm; v0.1.0 is available as a GitHub Release.
+The repository is public under Apache-2.0. The package remains `private: true` and is not published to npm; v0.1.0 is available as a GitHub/source release. Do not run `npm install agent-fleet`: the public npm package named `agent-fleet` is a different MIT-licensed project.
 
 Deployed docs site: [http://kingye.me/agent-fleet/](http://kingye.me/agent-fleet/).
 
@@ -33,7 +33,7 @@ This repository currently contains the first local control-plane slice:
 - SSH remote Worker adapter, remote node registration, remote readiness checks, remote workspace provisioning through git refs, and selective offload for high-load goals.
 - Steward checkpoints and `GET /api/recovery` for reconstructing active goals, Worker sessions, resume commands, worktree metadata, and next actions after terminal disconnects or restarts.
 
-Richer autonomous loop behavior, production-grade remote fleet operations, and broader multi-project review are post-v0.1.0 roadmap items.
+Richer autonomous loop behavior, hardened remote fleet operations, and broader multi-project review are post-v0.1.0 roadmap items.
 
 ## Quick Start
 
@@ -43,9 +43,11 @@ Requirements:
 - npm 10+
 - A Worker command on PATH. zsh aliases can work, but executable, noninteractive commands are more reliable when launched by the API without a TTY.
 
-Install and verify:
+Install from source and verify:
 
 ```sh
+git clone https://github.com/ikingye/agent-fleet.git
+cd agent-fleet
 npm ci
 npm run check
 npm run build
@@ -54,7 +56,6 @@ npm run build
 Run locally:
 
 ```sh
-cd ~/code/project/agent-fleet
 npm run dev
 ```
 
@@ -65,15 +66,18 @@ npm run dev:server
 npm run dev:web
 ```
 
-After installing or linking the package, the `steward` command can talk to the same API:
+After `npm run build`, use either a local npm link or the built CLI directly:
 
 ```sh
+npm link
 steward config init
 steward providers list
 steward status
 steward chat --workspace ~/code/project/mahjong --project mahjong
 steward chat --workspace ~/code/project/mahjong --once "What needs my review?"
 ```
+
+Without a global link, replace `steward` with `node dist/cli/main.js` in those commands.
 
 `steward` with no arguments opens an interactive chat using the current directory as the workspace. Use
 `STEWARD_API_URL` or `--api-url` when the API is not running on `http://127.0.0.1:8787`.
@@ -147,7 +151,7 @@ See [docs/configuration.md](docs/configuration.md) for details.
 
 ## v0.1.0 Release Scope
 
-v0.1.0 is available as a GitHub Release for this public repository. Keep `private: true`; do not prepare npm public publishing without an owner decision. Release maintenance means the repository builds, checks pass, docs avoid private host/path examples, and release branches are merged into `main` by the release manager before branch cleanup.
+v0.1.0 is available as a GitHub Release for this public repository. Keep `private: true`; do not prepare npm public publishing without an owner decision. The npm package name `agent-fleet` is already used by another project, so install this repository from source until the owner chooses a package name and publishing plan. Release maintenance means the repository builds, checks pass, docs avoid private host/path examples, and release branches are merged into `main` by the release manager before branch cleanup.
 
 Known limitations:
 

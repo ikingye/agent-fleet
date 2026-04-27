@@ -30,7 +30,7 @@ The Steward should not become a coding terminal. Worker Agents should treat Stew
 
 agent-fleet is not a business application host. The dashboard is a compact management and recovery surface. Product-specific UI and implementation belong in the target project workspace, not inside the control-plane repository.
 
-agent-fleet is also not a public npm package in v0.1.0. The repository stays `private: true`; v0.1.0 is an internal git release line with public-project hygiene.
+agent-fleet is also not this project's public npm package in v0.1.0. The repository is public under Apache-2.0, but `package.json` stays `private: true`; v0.1.0 is a GitHub/source release. Do not install the public npm package named `agent-fleet`, because that package belongs to a different project.
 
 ## Current v0.1.0 Surface
 
