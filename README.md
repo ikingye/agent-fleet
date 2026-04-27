@@ -4,9 +4,11 @@ agent-fleet is a public Steward Agent control plane for coordinating coding agen
 
 agent-fleet is the compact management system. Business project UI, product code, and project-specific implementation should stay in the target project workspace, not be embedded in this repository or dashboard.
 
-The repository is public under Apache-2.0. The package remains `private: true` and is not published to npm; v0.1.0 is available as a GitHub Release.
+The repository is public under Apache-2.0. The package remains `private: true` and is not published to npm; install from the GitHub source checkout for now.
 
-Deployed docs site: [http://kingye.me/agent-fleet/](http://kingye.me/agent-fleet/).
+Docs: [https://ikingye.github.io/agent-fleet/](https://ikingye.github.io/agent-fleet/).
+
+Do not run `npm install agent-fleet`. The npm package name `agent-fleet` is already used by another project, so the public npm package is not this Steward Agent control plane.
 
 ## What It Solves
 
@@ -35,26 +37,46 @@ This repository currently contains the first local control-plane slice:
 
 Richer autonomous loop behavior, production-grade remote fleet operations, and broader multi-project review are post-v0.1.0 roadmap items.
 
-## Quick Start
+## Install From Source
 
 Requirements:
 
 - Node.js 24+
 - npm 10+
+- Git
 - A Worker command on PATH. zsh aliases can work, but executable, noninteractive commands are more reliable when launched by the API without a TTY.
 
-Install and verify:
+Clone, install dependencies, and build:
 
 ```sh
+git clone https://github.com/ikingye/agent-fleet.git
+cd agent-fleet
 npm ci
-npm run check
 npm run build
 ```
 
-Run locally:
+Run the full verification suite:
 
 ```sh
-cd ~/code/project/agent-fleet
+npm run check
+```
+
+There is no one-command installer in v0.1.0. To expose the local CLI, either link the source checkout:
+
+```sh
+npm link
+steward status
+```
+
+or run the built CLI directly:
+
+```sh
+node dist/cli/main.js status
+```
+
+## Run Locally
+
+```sh
 npm run dev
 ```
 
@@ -65,7 +87,7 @@ npm run dev:server
 npm run dev:web
 ```
 
-After installing or linking the package, the `steward` command can talk to the same API:
+After linking the source checkout or using `node dist/cli/main.js`, the `steward` CLI can talk to the same API:
 
 ```sh
 steward config init
@@ -75,8 +97,7 @@ steward chat --workspace ~/code/project/mahjong --project mahjong
 steward chat --workspace ~/code/project/mahjong --once "What needs my review?"
 ```
 
-`steward` with no arguments opens an interactive chat using the current directory as the workspace. Use
-`STEWARD_API_URL` or `--api-url` when the API is not running on `http://127.0.0.1:8787`.
+`steward` with no arguments opens an interactive chat using the current directory as the workspace. Use `STEWARD_API_URL` or `--api-url` when the API is not running on `http://127.0.0.1:8787`.
 
 Open `http://127.0.0.1:5173`, use Steward Chat as the owner's primary surface, and submit work through Steward Intake with an explicit Target directory. For normal product work the target `workspacePath` should be the business project, such as `~/code/project/mahjong`, not this agent-fleet repository. The Steward records that path with the goal and Worker cwd/project work belongs there unless the owner explicitly asks to change agent-fleet itself.
 
@@ -94,13 +115,15 @@ The dashboard is a compact control-plane surface, not a business app host. Use i
 
 ## IM And Webhook Connector
 
-The v0.1.0 connector boundary is a generic webhook transport for IM gateways. It maps an authenticated inbound message to Steward Chat, binds it to an explicit `workspacePath`, and returns a generic text reply. It is not a full WeChat provider implementation.
+The v0.1.0 connector boundary is a generic webhook transport for IM gateways. It maps an authenticated inbound message to Steward Chat, binds it to an explicit `workspacePath`, and returns a generic text reply. It is not a full WeChat/IM SDK or provider-specific integration.
 
 See [docs/configuration.md](docs/configuration.md#im-webhook-connectors) for connector configuration, HMAC signing, challenge handling, and endpoint details.
 
 ## Remote Workers
 
-Remote machines are stateless compute resources. Register SSH execution nodes with a scratch `workRoot`, tags, capacity, and optional proxy URL; the Steward selectively offloads high-load goals when a matching ready node has capacity, otherwise it records a local fallback. Remote workspaces are prepared through git refs by default, and private repository access requires owner-authorized credentials such as a deploy key lease.
+Remote machines are stateless compute resources. Register SSH execution nodes with a scratch `workRoot`, tags, capacity, and optional proxy URL; the Steward selectively offloads high-load goals when a matching ready node has capacity, otherwise it records a local fallback.
+
+Remote Workers require real operator setup: SSH reachability, provider login or Worker runtime authentication for Codex/Claude/Gemini as applicable, GitHub repository access through a deploy key, machine user, or GitHub App, proxy routing when needed, remote filesystem permissions, and a verified scratch workspace. Remote workspaces are prepared through git refs by default, and private repository access requires owner-authorized credentials such as a deploy key lease.
 
 See [docs/remote/macos-offload.md](docs/remote/macos-offload.md) and [docs/remote/codex-bootstrap.md](docs/remote/codex-bootstrap.md).
 
@@ -145,18 +168,21 @@ Interactive aliases such as `codexyoloproxy` may fail when launched by the API w
 
 See [docs/configuration.md](docs/configuration.md) for details.
 
-## v0.1.0 Release Scope
+## Current Scope And Limits
 
-v0.1.0 is available as a GitHub Release for this public repository. Keep `private: true`; do not prepare npm public publishing without an owner decision. Release maintenance means the repository builds, checks pass, docs avoid private host/path examples, and release branches are merged into `main` by the release manager before branch cleanup.
+v0.1.0 is the first public source release of this public repository. It is useful for local control-plane development, operator review, and early Steward/Worker workflows, but it is not a hardened multi-user service.
 
 Known limitations:
 
-- Local JSON state is inspectable and durable, but not a multi-user database.
-- Remote execution requires explicit SSH, Codex, proxy, and repository credential setup per node.
-- Webhook connectors are generic gateway adapters, not provider-specific IM SDKs.
+- JSON-backed local state is inspectable and durable, but not a multi-user database.
+- Worker lifecycle reconciliation, resume records, and report ingestion exist, but production supervision loops still need hardening.
+- Remote execution requires explicit SSH, provider login or Worker runtime authentication, proxy routing when needed, repository credentials, and remote permissions per node.
+- Remote offload is selective and useful, but production scheduling is not a full cluster manager.
+- Webhook connectors are generic gateway adapters, not a full WeChat/IM SDK.
+- The default deployment is local-first and bound to localhost; public exposure requires an authenticated gateway, HMAC request signatures, sender allowlist controls, and careful secret handling.
 - Provider config commands are durable and scriptable, but v0.1.0 does not yet include an interactive first-run wizard or multi-select prompt.
 - The Steward provider is persisted and exposed for setup, but v0.1.0 does not yet run the Steward through that configured LLM provider. Worker dispatch does use configured Worker providers and models.
-- Worker resume and report ingestion exist as control-plane state, but production supervision loops still need hardening.
+- The package remains `private: true`; do not publish to npm or rely on the public npm package named `agent-fleet`.
 
 ## Repository Layout
 

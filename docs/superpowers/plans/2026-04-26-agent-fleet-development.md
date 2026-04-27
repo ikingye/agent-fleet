@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build agent-fleet into a private but public-ready Steward Agent control plane that can supervise Worker Agents across projects, sessions, worktrees, and remote execution nodes.
+**Goal:** Build agent-fleet into a public-source Steward Agent control plane that can supervise Worker Agents across projects, sessions, worktrees, and remote execution nodes.
 
 **Architecture:** Keep the Steward Agent as the single orchestration authority. Preserve explicit module boundaries: HTTP routes compose services, the Steward records decisions and dispatches work, stores persist control-plane facts, Worker adapters encapsulate process execution, and future remote/worktree schedulers remain testable domain modules.
 
@@ -441,4 +441,4 @@ Expected: pass.
 - [ ] Run `npm run build`.
 - [ ] Inspect `git status --short`.
 - [ ] Update `README.md` and `ROADMAP.md` if the implemented feature set changed.
-- [ ] Keep `package.json` private until the owner explicitly opens the repository.
+- [ ] Keep `package.json` private unless the owner explicitly decides to publish a package.

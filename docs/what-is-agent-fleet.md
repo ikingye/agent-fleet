@@ -30,7 +30,7 @@ The Steward should not become a coding terminal. Worker Agents should treat Stew
 
 agent-fleet is not a business application host. The dashboard is a compact management and recovery surface. Product-specific UI and implementation belong in the target project workspace, not inside the control-plane repository.
 
-agent-fleet is also not a public npm package in v0.1.0. The repository stays `private: true`; v0.1.0 is an internal git release line with public-project hygiene.
+agent-fleet is also not the public npm package named `agent-fleet`. The npm package name `agent-fleet` is already used by another project. This repository is public under Apache-2.0, but `package.json` stays `private: true`; install from the GitHub source checkout for now. Do not run `npm install agent-fleet`.
 
 ## Current v0.1.0 Surface
 
@@ -44,4 +44,4 @@ v0.1.0 includes:
 - Remote node readiness, remote workspace provisioning through git refs, and deploy-key lease helpers.
 - Recovery endpoint for terminal disconnects, compacted Steward sessions, and restarts.
 
-Production supervision loops, multi-user storage, and mature remote fleet scheduling remain roadmap work.
+v0.1.0 is not a hardened multi-user service. Production supervision loops, multi-user storage, Worker lifecycle and resume hardening, and mature remote fleet scheduling remain roadmap work.

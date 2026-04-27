@@ -7,12 +7,13 @@ The documentation is structured like an operator handbook: first understand the 
 ## Fast Paths
 
 - New operator: start with [What Is agent-fleet](what-is-agent-fleet.md), then [Getting Started](getting-started.md).
+- Source install: follow [Getting Started](getting-started.md). This project is not installed from the public npm package named `agent-fleet`.
 - Product model review: read [Steward/Worker Model](steward-worker-model.md).
 - Terminal usage: read [steward CLI](cli.md).
 - Browser usage: read [Web Dashboard](dashboard.md).
 - IM or webhook setup: read [Connectors And Security](connectors-security.md).
 - Remote execution: read [Remote Workers](remote-workers.md).
-- Release readiness: read [v0.1.0 Limitations](v0.1.0-limitations.md) and [Publishing Docs To GitHub Pages](publishing.md).
+- Current maturity: read [Current Scope And Limits](v0.1.0-limitations.md).
 
 ## Why It Exists
 
@@ -34,4 +35,4 @@ The owner talks to the Steward. Worker Agents do concrete work. The Steward reco
 1. Read [What Is agent-fleet](what-is-agent-fleet.md).
 2. Install and run the local control plane with [Getting Started](getting-started.md).
 3. Learn the delegation boundary in [Steward/Worker Model](steward-worker-model.md).
-4. Build and publish the docs with [Publishing Docs To GitHub Pages](publishing.md) when the release manager is ready.
+4. Review [Current Scope And Limits](v0.1.0-limitations.md) before relying on remote execution or external connectors.

@@ -93,7 +93,7 @@ The docs site uses a separate static Vite build.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DOCS_BASE` | derived from `GITHUB_REPOSITORY`, usually `/agent-fleet/` | Base path for GitHub Pages or a custom domain. |
+| `DOCS_BASE` | derived from `GITHUB_REPOSITORY`, usually `/agent-fleet/` | Base path for the hosted docs site. |
 
 For a custom domain or root deployment:
 
@@ -101,4 +101,4 @@ For a custom domain or root deployment:
 DOCS_BASE=/ npm run docs:build
 ```
 
-For a project Pages URL, the default base is normally correct.
+For the canonical docs URL `https://ikingye.github.io/agent-fleet/`, the default base is normally correct.

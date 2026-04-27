@@ -14,7 +14,7 @@ The connector flow:
 4. The Steward records the owner message and returns a text reply.
 5. The gateway delivers that reply back to the external channel.
 
-The connector is a gateway boundary, not a provider-specific WeChat SDK.
+The connector is a generic gateway boundary, not a full WeChat/IM SDK or provider-specific integration.
 
 ## Endpoints
 
@@ -72,7 +72,7 @@ Required controls:
 - Bind the API to `127.0.0.1` unless the deployment intentionally exposes it behind an authenticated gateway.
 - Use per-connector callback tokens.
 - Sign POST bodies with connector-specific HMAC secrets.
-- Restrict `allowedSenderIds`.
+- Restrict `allowedSenderIds` as the sender allowlist.
 - Redact connector secrets from public configuration and logs.
 - Treat external channel input as untrusted owner text until authenticated by transport controls.
 - Keep Worker stdout/stderr and command details out of connector replies by default.

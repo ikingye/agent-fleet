@@ -29,18 +29,30 @@ export function App() {
   return (
     <div className="docs-shell">
       <header className="topbar">
-        <a className="brand" href="#home" aria-label="agent-fleet docs home">
-          <img src="logo.svg" alt="" />
-          <span>
-            <strong>agent-fleet</strong>
-            <small>v0.1.0 docs</small>
-          </span>
-        </a>
+        <div className="header-start">
+          <a className="brand" href="#home" aria-label="agent-fleet docs home">
+            <img src="logo.svg" alt="" />
+            <span>
+              <strong>agent-fleet</strong>
+              <small>Steward Agent docs</small>
+            </span>
+          </a>
+          <label className="version-picker">
+            <span>Version</span>
+            <select className="version-select" aria-label="Documentation version" defaultValue="latest">
+              <option value="latest">latest</option>
+              <option value="v0.1.0">v0.1.0</option>
+            </select>
+          </label>
+        </div>
         <nav className="topnav" aria-label="Primary documentation sections">
           <a href="#getting-started">Start</a>
           <a href="#steward-worker-model">Model</a>
           <a href="#remote-workers">Remote</a>
-          <a href="#publishing">Pages</a>
+          <a href="#connectors-security">Security</a>
+          <a className="github-link" href="https://github.com/ikingye/agent-fleet" aria-label="GitHub repository">
+            GitHub
+          </a>
         </nav>
       </header>
 
@@ -89,17 +101,17 @@ export function App() {
           <article className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />
         </main>
 
-        <aside className="release-rail" aria-label="Release essentials">
+        <aside className="release-rail" aria-label="Documentation essentials">
           <section>
-            <h2>Release Essentials</h2>
-            <a href="#getting-started">Install and verify</a>
+            <h2>Essentials</h2>
+            <a href="#getting-started">Install from source</a>
             <a href="#steward-worker-model">Keep Steward/Worker boundary</a>
             <a href="#connectors-security">Check connector security</a>
             <a href="#remote-workers">Prepare remote prerequisites</a>
-            <a href="#publishing">Build and publish Pages</a>
+            <a href="#v0.1.0-limitations">Current scope and limits</a>
           </section>
           <section>
-            <h2>Build</h2>
+            <h2>Verify Locally</h2>
             <code>npm run docs:build</code>
             <code>npm run check</code>
             <code>npm run build</code>

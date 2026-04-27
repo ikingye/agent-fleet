@@ -5,7 +5,6 @@ import connectorsSecurity from "../../docs/connectors-security.md?raw";
 import dashboard from "../../docs/dashboard.md?raw";
 import gettingStarted from "../../docs/getting-started.md?raw";
 import home from "../../docs/index.md?raw";
-import publishing from "../../docs/publishing.md?raw";
 import recovery from "../../docs/recovery.md?raw";
 import remoteCodexBootstrap from "../../docs/remote/codex-bootstrap.md?raw";
 import remoteMacosOffload from "../../docs/remote/macos-offload.md?raw";
@@ -94,17 +93,10 @@ export const docsPages: DocsPage[] = [
     body: configurationReference
   },
   {
-    slug: "publishing",
-    title: "Publishing Docs To GitHub Pages",
-    group: "Reference",
-    description: "Local preview, build, Pages Actions workflow, base path, and release setup.",
-    body: publishing
-  },
-  {
     slug: "v0.1.0-limitations",
-    title: "v0.1.0 Limitations",
+    title: "Current Scope And Limits",
     group: "Reference",
-    description: "Known limits, security constraints, roadmap, and release manager checklist.",
+    description: "Supported surfaces, operational cautions, known limits, and roadmap direction.",
     body: limitations
   },
   {

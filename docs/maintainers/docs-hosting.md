@@ -1,6 +1,8 @@
-# Publishing Docs To GitHub Pages
+# Maintainer Note: Docs Hosting
 
-The docs site is a static Vite/React project in `docs-site/` that renders Markdown content from `docs/`. It builds to `docs-site/dist` and can be deployed by GitHub Pages Actions when Pages is enabled for the repository.
+This note is for repository maintainers. It is intentionally not part of the primary public docs navigation.
+
+The public docs site is a static Vite/React project in `docs-site/` that renders Markdown content from `docs/`. It builds to `docs-site/dist` and is hosted at `https://ikingye.github.io/agent-fleet/`.
 
 ## Local Preview
 
@@ -30,7 +32,7 @@ npm run docs:preview
 
 ## Base Path
 
-For a project Pages URL such as `https://OWNER.github.io/agent-fleet/`, the default base path is derived from the repository name and should be:
+For the canonical project docs URL `https://ikingye.github.io/agent-fleet/`, the default base path is derived from the repository name and should be:
 
 ```text
 /agent-fleet/
@@ -44,7 +46,7 @@ DOCS_BASE=/ npm run docs:build
 
 The workflow also accepts `DOCS_BASE` from repository, organization, or environment variables if a release manager configures one.
 
-## GitHub Pages Workflow
+## Hosting Workflow
 
 The workflow lives at:
 
@@ -58,10 +60,10 @@ It:
 - Supports manual `workflow_dispatch`.
 - Installs with `npm ci`.
 - Runs `npm run docs:build`.
-- Uploads `docs-site/dist` as a Pages artifact.
-- Deploys with the official Pages deployment action.
+- Uploads `docs-site/dist` as a hosting artifact.
+- Deploys with the repository hosting workflow.
 
-## Release Manager Setup
+## Maintainer Setup
 
 To publish:
 
@@ -72,8 +74,8 @@ To publish:
 5. Trigger the Pages workflow or push to `main`.
 6. Review the deployed page URL from the workflow summary.
 
-The workflow is compatible with private repositories when the GitHub plan and repository settings allow GitHub Pages. If Pages or Actions are disabled, the build still works locally but deployment will not run successfully.
+If hosting or Actions are disabled, the build still works locally but deployment will not run successfully.
 
-## Do Not Publish From This Branch Directly
+## Do Not Deploy From This Branch Directly
 
-This branch prepares the docs site. It does not merge, tag, publish Pages, change repository visibility, or alter release settings. Those actions belong to the release manager.
+Docs branches prepare site changes for review. They do not merge, tag, deploy hosted docs, change repository visibility, or alter release settings. Those actions belong to the maintainer handling the release.

@@ -11,15 +11,35 @@ This guide brings up the local control plane, verifies the repository, opens the
 
 For API-launched Workers, prefer a real executable command over an interactive shell alias. Aliases can depend on a TTY and fail when launched by the server process.
 
-## Install
+## Install From Source
 
 ```sh
+git clone https://github.com/ikingye/agent-fleet.git
+cd agent-fleet
 npm ci
-npm run check
 npm run build
 ```
 
-The repository is intentionally private in v0.1.0. Do not prepare npm publishing.
+Do not run `npm install agent-fleet`. The npm package name `agent-fleet` is already used by another project, and this repository intentionally keeps `"private": true` in `package.json`.
+
+Run the full verification suite after dependencies are installed:
+
+```sh
+npm run check
+```
+
+There is no one-command installer in v0.1.0. To expose the local CLI during development, either link the source checkout:
+
+```sh
+npm link
+steward status
+```
+
+or run the built CLI directly:
+
+```sh
+node dist/cli/main.js status
+```
 
 ## Configure A Worker Command
 
@@ -107,4 +127,4 @@ Use the recovery report before dispatching more work.
 - Configure [IM/webhook connectors](connectors-security.md).
 - Prepare [remote Workers](remote-workers.md).
 - Read [Recovery And State](recovery.md).
-- Build the [docs site](publishing.md) before release.
+- Review [Current Scope And Limits](v0.1.0-limitations.md).
