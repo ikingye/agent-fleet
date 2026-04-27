@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+.turbo/
+coverage/
+playwright-report/
+test-results/
+.playwright-cli/
+docs-site/dist/
+*-smoke.png
+screenshots/
+*.screenshot.png
+screenshot-*.png
+*.har
+*.trace.zip
+*.tsbuildinfo
+
+# Runtime state
+.env
+.env.*
+!.env.example
+*.log
+logs/
+tmp/
+temp/
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# Secrets and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+
+# agent-fleet local state
+.agent-fleet/
+.playwright-mcp/
+.worktrees/
+.superpowers/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

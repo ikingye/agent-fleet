@@ -1,0 +1,133 @@
+import architecture from "../../docs/architecture.md?raw";
+import cli from "../../docs/cli.md?raw";
+import configurationReference from "../../docs/configuration-reference.md?raw";
+import connectorsSecurity from "../../docs/connectors-security.md?raw";
+import dashboard from "../../docs/dashboard.md?raw";
+import gettingStarted from "../../docs/getting-started.md?raw";
+import home from "../../docs/index.md?raw";
+import publishing from "../../docs/publishing.md?raw";
+import recovery from "../../docs/recovery.md?raw";
+import remoteCodexBootstrap from "../../docs/remote/codex-bootstrap.md?raw";
+import remoteMacosOffload from "../../docs/remote/macos-offload.md?raw";
+import remoteWorkers from "../../docs/remote-workers.md?raw";
+import stewardWorkerModel from "../../docs/steward-worker-model.md?raw";
+import limitations from "../../docs/v0.1.0-limitations.md?raw";
+import whatIsAgentFleet from "../../docs/what-is-agent-fleet.md?raw";
+
+export interface DocsPage {
+  slug: string;
+  title: string;
+  group: "Start" | "Interfaces" | "Operations" | "Reference" | "Deep Dives";
+  description: string;
+  body: string;
+}
+
+export const docsPages: DocsPage[] = [
+  {
+    slug: "home",
+    title: "agent-fleet v0.1.0 Docs",
+    group: "Start",
+    description: "Operator handbook for the Steward Agent control plane.",
+    body: home
+  },
+  {
+    slug: "what-is-agent-fleet",
+    title: "What Is agent-fleet",
+    group: "Start",
+    description: "Product purpose, current surface, and what the control plane is not.",
+    body: whatIsAgentFleet
+  },
+  {
+    slug: "steward-worker-model",
+    title: "Steward/Worker Model",
+    group: "Start",
+    description: "Delegation boundary, Worker naming, decisions, corrections, and cleanup.",
+    body: stewardWorkerModel
+  },
+  {
+    slug: "getting-started",
+    title: "Getting Started",
+    group: "Start",
+    description: "Install, configure a Worker command, run the app, and submit first work.",
+    body: gettingStarted
+  },
+  {
+    slug: "cli",
+    title: "steward CLI",
+    group: "Interfaces",
+    description: "Terminal status, one-off chat, interactive chat, API URL, and token options.",
+    body: cli
+  },
+  {
+    slug: "dashboard",
+    title: "Web Dashboard",
+    group: "Interfaces",
+    description: "Compact owner-facing control plane for chat, intake, decisions, and recovery.",
+    body: dashboard
+  },
+  {
+    slug: "connectors-security",
+    title: "Connectors And Security",
+    group: "Interfaces",
+    description: "Webhook connector boundary, HMAC signing, sender allowlists, and limits.",
+    body: connectorsSecurity
+  },
+  {
+    slug: "remote-workers",
+    title: "Remote Workers",
+    group: "Operations",
+    description: "Remote offload prerequisites, scratch layout, GitHub access, and proxy model.",
+    body: remoteWorkers
+  },
+  {
+    slug: "recovery",
+    title: "Recovery And State",
+    group: "Operations",
+    description: "Durable state, recovery endpoint, checkpoints, and session reconciliation.",
+    body: recovery
+  },
+  {
+    slug: "configuration-reference",
+    title: "Configuration Reference",
+    group: "Reference",
+    description: "Environment variables, connector shape, remote node fields, and docs build base.",
+    body: configurationReference
+  },
+  {
+    slug: "publishing",
+    title: "Publishing Docs To GitHub Pages",
+    group: "Reference",
+    description: "Local preview, build, Pages Actions workflow, base path, and release setup.",
+    body: publishing
+  },
+  {
+    slug: "v0.1.0-limitations",
+    title: "v0.1.0 Limitations",
+    group: "Reference",
+    description: "Known limits, security constraints, roadmap, and release manager checklist.",
+    body: limitations
+  },
+  {
+    slug: "architecture",
+    title: "Architecture Notes",
+    group: "Deep Dives",
+    description: "Existing engineering architecture notes for the local control-plane slice.",
+    body: architecture
+  },
+  {
+    slug: "remote-macos-offload",
+    title: "Remote macOS Offload",
+    group: "Deep Dives",
+    description: "Detailed remote offload behavior and deploy-key lease model.",
+    body: remoteMacosOffload
+  },
+  {
+    slug: "remote-codex-bootstrap",
+    title: "Remote Codex Bootstrap",
+    group: "Deep Dives",
+    description: "Remote Codex runtime, GitHub access, proxy, and readiness bootstrap.",
+    body: remoteCodexBootstrap
+  }
+];
+
+export const docsGroups = ["Start", "Interfaces", "Operations", "Reference", "Deep Dives"] as const;

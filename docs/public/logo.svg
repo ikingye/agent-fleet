@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>agent-fleet logo</title>
+  <rect width="64" height="64" rx="12" fill="#111827"/>
+  <path d="M18 20h28v7H18z" fill="#14b8a6"/>
+  <path d="M18 31h18v7H18z" fill="#f59e0b"/>
+  <path d="M18 42h28v7H18z" fill="#e5e7eb"/>
+  <path d="M43 31l7 3.5-7 3.5z" fill="#14b8a6"/>
+</svg>

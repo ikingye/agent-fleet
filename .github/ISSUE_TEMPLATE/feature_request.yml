@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a focused improvement.
+title: "feat: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow
+      description: What user workflow should agent-fleet support?
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current limitation
+      description: What is hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the smallest useful change.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
