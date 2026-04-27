@@ -55,6 +55,7 @@ describe("createStewardApiClient", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
+          transport: "cli",
           body: "Hello",
           workspacePath: "/tmp/project",
           projectName: "agent-fleet"

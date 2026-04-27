@@ -1,7 +1,7 @@
 import type { StewardMessage } from "../shared/types.js";
 import { DEFAULT_STEWARD_API_URL, normalizeApiUrl } from "./args.js";
 
-export const DEFAULT_STEWARD_CONVERSATION_PATH = "/api/steward/conversations/messages";
+export const DEFAULT_STEWARD_CONVERSATION_PATH = "/api/conversations/steward-cli/messages";
 const STEWARD_MESSAGES_PATH = "/api/steward/messages";
 
 export interface SendStewardMessageInput {
@@ -88,6 +88,7 @@ async function parseErrorMessage(response: Response): Promise<string> {
 
 function buildBody(input: SendStewardMessageInput): string {
   return JSON.stringify({
+    transport: "cli",
     body: input.body,
     ...(input.workspacePath ? { workspacePath: input.workspacePath } : {}),
     ...(input.projectName ? { projectName: input.projectName } : {}),
