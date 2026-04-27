@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./createApp.js";
+import { signWebhookConnectorRequest } from "../connectors/webhookConnector.js";
 import type { RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import type { RemoteWorkspaceProvisioner } from "../remote/remoteWorkspaceProvisioner.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
@@ -265,6 +266,70 @@ describe("API routes", () => {
       expect(listResponse.json().messages).toHaveLength(2);
       expect(dashboard.stewardMessages).toHaveLength(2);
       expect(dashboard.stewardMessages.map((message: { role: string }) => message.role)).toEqual(["owner", "steward"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("receives signed webhook connector messages through the Steward conversation API", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter,
+      webhookConnectors: [
+        {
+          id: "wechat-dev",
+          label: "WeChat dev tunnel",
+          transport: "webhook",
+          provider: "wechat-compatible",
+          token: "callback-token",
+          signingSecret: "signing-secret",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          allowedSenderIds: ["wechat-user-1"]
+        }
+      ]
+    });
+
+    try {
+      const rawBody = JSON.stringify({
+        senderId: "wechat-user-1",
+        conversationId: "wechat-room-1",
+        text: "What is the current recovery state?"
+      });
+      const timestamp = "1777256640";
+      const nonce = "nonce-1";
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/connectors/webhook/wechat-dev?timestamp=${timestamp}&nonce=${nonce}&signature=${signWebhookConnectorRequest({
+          secret: "signing-secret",
+          timestamp,
+          nonce,
+          rawBody
+        })}`,
+        payload: rawBody,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        connectorId: "wechat-dev",
+        conversationId: "wechat-room-1",
+        recipientId: "wechat-user-1",
+        messageType: "text"
+      });
+      expect(response.json().text).toContain("/Users/yewang/code/project/mahjong");
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(dashboard.stewardMessages).toHaveLength(2);
+      expect(dashboard.stewardMessages[0]).toMatchObject({
+        role: "owner",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        body: "What is the current recovery state?"
+      });
     } finally {
       await app.close();
     }

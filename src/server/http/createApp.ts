@@ -14,6 +14,11 @@ import {
   LocalGithubDeployKeyLeaseResolver,
   type GithubDeployKeyLeaseResolver
 } from "../remote/githubDeployKeyLeaseResolver.js";
+import {
+  createWebhookConnectorHandler,
+  WebhookConnectorError,
+  type WebhookConnectorConfig
+} from "../connectors/webhookConnector.js";
 import { evaluateRemoteNodeReadiness } from "../remote/remoteNodeReadiness.js";
 import { normalizeRemoteWorkRoot } from "../remote/remotePaths.js";
 import {
@@ -60,6 +65,7 @@ export interface CreateAppOptions {
   remoteSshWorkerRunner?: SshWorkerProcessRunner;
   remoteCommandRunner?: RemoteCommandRunner;
   workerProcessProbe?: Parameters<typeof reconcileWorkerSessions>[0]["probeProcess"];
+  webhookConnectors?: WebhookConnectorConfig[];
 }
 
 function requestBody(body: unknown): Record<string, unknown> {
@@ -260,6 +266,22 @@ function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function requestRawBody(body: unknown): string {
+  if (typeof body === "string") {
+    return body;
+  }
+
+  if (body === undefined || body === null) {
+    return "";
+  }
+
+  return JSON.stringify(body);
+}
+
+function queryString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
+}
+
 function githubDeployKeyLeaseErrorStatus(error: Error): 400 | 404 {
   return error.message.startsWith("Worker session not found:") ||
     error.message.startsWith("Execution node not found:") ||
@@ -302,6 +324,10 @@ export async function createApp(options: CreateAppOptions = {}) {
       options.worktreeRunner ?? (materializeWorktrees ? createNodeWorktreeRunner(defaultRepositoryPath) : undefined)
   });
   const stewardMessageLoop = new StewardMessageLoop({ store, steward });
+  const webhookConnectorHandler = createWebhookConnectorHandler({
+    configs: options.webhookConnectors ?? [],
+    stewardMessageLoop
+  });
 
   await app.register(cors, {
     origin(origin, callback) {
@@ -316,6 +342,63 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.get("/api/dashboard", async () => store.dashboard());
 
   app.get("/api/recovery", async () => buildStewardRecoveryReport(await store.dashboard()));
+
+  app.get("/api/connectors/webhook", async () => ({
+    connectors: webhookConnectorHandler.publicConfigs()
+  }));
+
+  app.get("/api/connectors/webhook/:connectorId", async (request, reply) => {
+    const params = request.params as { connectorId?: string };
+    const query = requestBody(request.query);
+
+    try {
+      return await webhookConnectorHandler.verifyChallenge({
+        connectorId: requireString(params.connectorId, "connectorId"),
+        token: queryString(query.token),
+        challenge: queryString(query.challenge ?? query.echostr)
+      });
+    } catch (error) {
+      if (error instanceof WebhookConnectorError) {
+        return reply.code(error.statusCode).send({
+          error: webhookConnectorErrorName(error.statusCode),
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  await app.register(
+    async (connectorApp) => {
+      connectorApp.addContentTypeParser("application/json", { parseAs: "string" }, (_request, body, done) => {
+        done(null, body);
+      });
+
+      connectorApp.post("/:connectorId", async (request, reply) => {
+        const params = request.params as { connectorId?: string };
+
+        try {
+          return await webhookConnectorHandler.receiveMessage({
+            connectorId: requireString(params.connectorId, "connectorId"),
+            rawBody: requestRawBody(request.body),
+            headers: request.headers,
+            query: requestBody(request.query)
+          });
+        } catch (error) {
+          if (error instanceof WebhookConnectorError) {
+            return reply.code(error.statusCode).send({
+              error: webhookConnectorErrorName(error.statusCode),
+              message: error.message
+            });
+          }
+
+          throw error;
+        }
+      });
+    },
+    { prefix: "/api/connectors/webhook" }
+  );
 
   app.post("/api/recovery/reconcile", async () => {
     const dashboard = await store.dashboard();
@@ -756,4 +839,20 @@ function buildRemoteProxyEnv(proxyUrl: string | null): Readonly<Record<string, s
     HTTPS_PROXY: normalizedProxyUrl,
     NO_PROXY: "localhost,127.0.0.1"
   };
+}
+
+function webhookConnectorErrorName(statusCode: WebhookConnectorError["statusCode"]): string {
+  if (statusCode === 404) {
+    return "Not Found";
+  }
+
+  if (statusCode === 401) {
+    return "Unauthorized";
+  }
+
+  if (statusCode === 403) {
+    return "Forbidden";
+  }
+
+  return "Bad Request";
 }
