@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import process from "node:process";
-import { pathToFileURL } from "node:url";
 import { createStewardApiClient } from "./apiClient.js";
 import { parseStewardArgs, StewardCliUsageError } from "./args.js";
+import { isCliEntrypoint } from "./entrypoint.js";
 import { formatStatusSummary, runInteractiveChat } from "./readlineChat.js";
 
 interface CliIo {
@@ -119,6 +119,6 @@ export async function runCli(
   return 0;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isCliEntrypoint(import.meta.url, process.argv[1])) {
   process.exitCode = await runCli();
 }
