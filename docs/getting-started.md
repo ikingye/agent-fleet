@@ -41,6 +41,17 @@ Default local URLs:
 - Web app: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:8787`
 
+The installed CLI uses the same API:
+
+```sh
+steward status
+steward chat --workspace ~/code/project/mahjong --project mahjong
+```
+
+Run `steward` without arguments for an interactive terminal chat. Inside the chat, use `/workspace`,
+`/project`, `/status`, `/web`, and `/quit`. Set `STEWARD_API_URL` or pass `--api-url` if the API is not
+running at the default local URL.
+
 Use Steward Chat as the owner's primary interaction surface. Chat messages are persisted as `stewardMessages` in `.agent-fleet/control-plane.json`. Include or select the target `workspacePath` so the Steward can keep project state, Worker cwd, decisions, corrections, and resume information scoped to the right workspace.
 
 ## 4. Review The Dashboard
