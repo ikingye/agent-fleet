@@ -1,10 +1,12 @@
 # agent-fleet
 
-agent-fleet is a private-incubation, public-ready Steward Agent control plane for coordinating coding agents across projects, worktrees, sessions, and execution machines.
+agent-fleet is a public Steward Agent control plane for coordinating coding agents across projects, worktrees, sessions, and execution machines.
 
 agent-fleet is the compact management system. Business project UI, product code, and project-specific implementation should stay in the target project workspace, not be embedded in this repository or dashboard.
 
-The project is not open source yet. It is maintained with public-project hygiene now so the repository can become public later without restructuring its docs, safety process, or contributor expectations.
+The repository is public under Apache-2.0. The package remains `private: true` and is not published to npm; v0.1.0 is available as a GitHub Release.
+
+Deployed docs site: [http://kingye.me/agent-fleet/](http://kingye.me/agent-fleet/).
 
 ## What It Solves
 
@@ -145,7 +147,7 @@ See [docs/configuration.md](docs/configuration.md) for details.
 
 ## v0.1.0 Release Scope
 
-v0.1.0 is a private/internal git release. Keep `private: true`; do not prepare npm public publishing. Release readiness means the repository builds, checks pass, docs avoid private host/path examples, and release branches are merged into `main` by the release manager before branch cleanup.
+v0.1.0 is available as a GitHub Release for this public repository. Keep `private: true`; do not prepare npm public publishing without an owner decision. Release maintenance means the repository builds, checks pass, docs avoid private host/path examples, and release branches are merged into `main` by the release manager before branch cleanup.
 
 Known limitations:
 
@@ -190,4 +192,4 @@ Do not commit `.agent-fleet/`, local worktrees, terminal logs, tokens, private h
 
 ## License
 
-Apache-2.0. The repository remains private until the owner intentionally publishes it.
+Apache-2.0. This is a public repository; package publishing remains disabled by `private: true` unless the owner intentionally changes it.
