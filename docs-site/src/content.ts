@@ -21,12 +21,63 @@ export interface DocsPage {
   body: string;
 }
 
-export const docsPages: DocsPage[] = [
+export const docsVersions = [
+  {
+    id: "latest",
+    label: "latest",
+    homeTitle: "agent-fleet latest Docs",
+    homeDescription: "Latest docs track the current main branch.",
+    homeLead: "Latest docs track the current main branch."
+  },
+  {
+    id: "v0.1.0",
+    label: "v0.1.0",
+    homeTitle: "agent-fleet v0.1.0 Docs",
+    homeDescription: "Version archive for the v0.1.0 release.",
+    homeLead: "Version archive for the v0.1.0 release."
+  }
+] as const;
+
+export type DocsVersion = (typeof docsVersions)[number]["id"];
+
+export function parseDocsVersion(value: string | null | undefined): DocsVersion {
+  return docsVersions.some((version) => version.id === value) ? (value as DocsVersion) : "latest";
+}
+
+export function buildDocsPages(version: DocsVersion): DocsPage[] {
+  const metadata = docsVersions.find((candidate) => candidate.id === version) ?? docsVersions[0];
+
+  return baseDocsPages.map((page) => {
+    if (page.slug !== "home") {
+      return page;
+    }
+
+    return {
+      ...page,
+      title: metadata.homeTitle,
+      description: metadata.homeDescription,
+      body: replaceHomeLead(replaceFirstMarkdownHeading(page.body, metadata.homeTitle), metadata.homeLead)
+    };
+  });
+}
+
+function replaceFirstMarkdownHeading(markdown: string, title: string): string {
+  return markdown.replace(/^# .+$/m, `# ${title}`);
+}
+
+function replaceHomeLead(markdown: string, lead: string): string {
+  return markdown.replace(
+    "Latest docs track the current main branch.",
+    lead
+  );
+}
+
+const baseDocsPages: DocsPage[] = [
   {
     slug: "home",
-    title: "agent-fleet v0.1.0 Docs",
+    title: "agent-fleet latest Docs",
     group: "Start",
-    description: "Operator handbook for the Steward Agent control plane.",
+    description: "Latest docs track the current main branch.",
     body: home
   },
   {
@@ -121,5 +172,7 @@ export const docsPages: DocsPage[] = [
     body: remoteCodexBootstrap
   }
 ];
+
+export const docsPages = buildDocsPages("latest");
 
 export const docsGroups = ["Start", "Interfaces", "Operations", "Reference", "Deep Dives"] as const;

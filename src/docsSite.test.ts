@@ -51,15 +51,18 @@ describe("docs site", () => {
     expect(workflow).toContain("docs-site/dist");
   });
 
-  it("uses public docs chrome with a repository link and static version selector", () => {
+  it("uses public docs chrome with a repository link and controlled version selector", () => {
     const app = readFileSync(join(root, "docs-site", "src", "App.tsx"), "utf8");
+    const content = readFileSync(join(root, "docs-site", "src", "content.ts"), "utf8");
     const styles = readFileSync(join(root, "docs-site", "src", "styles.css"), "utf8");
 
     expect(app).toContain('href="https://github.com/ikingye/agent-fleet"');
     expect(app).toContain('aria-label="GitHub repository"');
     expect(app).toContain('aria-label="Documentation version"');
-    expect(app).toContain('value="latest"');
-    expect(app).toContain('value="v0.1.0"');
+    expect(app).toContain("value={docsVersion}");
+    expect(app).toContain("onChange={(event) => onVersionChange(event.target.value)}");
+    expect(content).toContain('id: "latest"');
+    expect(content).toContain('id: "v0.1.0"');
     expect(styles).toContain(".github-link");
     expect(styles).toContain(".version-select");
   });

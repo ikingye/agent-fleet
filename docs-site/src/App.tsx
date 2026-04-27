@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { docsGroups, docsPages, type DocsPage } from "./content.js";
+import {
+  buildDocsPages,
+  docsGroups,
+  docsVersions,
+  parseDocsVersion,
+  type DocsPage,
+  type DocsVersion
+} from "./content.js";
 import { markdownToHtml } from "./markdown.js";
 
 function currentSlug(): string {
@@ -7,24 +14,56 @@ function currentSlug(): string {
   return hash || "home";
 }
 
+function currentVersion(): DocsVersion {
+  return parseDocsVersion(new URLSearchParams(window.location.search).get("version"));
+}
+
+function writeVersionToUrl(version: DocsVersion): void {
+  const url = new URL(window.location.href);
+  if (version === "latest") {
+    url.searchParams.delete("version");
+  } else {
+    url.searchParams.set("version", version);
+  }
+
+  window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
 export function App() {
   const [activeSlug, setActiveSlug] = useState(currentSlug);
+  const [docsVersion, setDocsVersion] = useState(currentVersion);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
-    const onHashChange = () => setActiveSlug(currentSlug());
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    const onLocationChange = () => {
+      setActiveSlug(currentSlug());
+      setDocsVersion(currentVersion());
+    };
+
+    window.addEventListener("hashchange", onLocationChange);
+    window.addEventListener("popstate", onLocationChange);
+    return () => {
+      window.removeEventListener("hashchange", onLocationChange);
+      window.removeEventListener("popstate", onLocationChange);
+    };
   }, []);
 
+  const docsPages = useMemo(() => buildDocsPages(docsVersion), [docsVersion]);
   const activePage = docsPages.find((page) => page.slug === activeSlug) ?? docsPages[0];
+  const activeVersion = docsVersions.find((version) => version.id === docsVersion) ?? docsVersions[0];
   const html = useMemo(() => markdownToHtml(activePage.body), [activePage.body]);
-  const visiblePages = useMemo(() => filterPages(query), [query]);
+  const visiblePages = useMemo(() => filterPages(query, docsPages), [query, docsPages]);
 
   useEffect(() => {
     document.title = `${activePage.title} | agent-fleet docs`;
     window.scrollTo({ top: 0, behavior: "auto" });
   }, [activePage]);
+
+  const onVersionChange = (value: string) => {
+    const nextVersion = parseDocsVersion(value);
+    setDocsVersion(nextVersion);
+    writeVersionToUrl(nextVersion);
+  };
 
   return (
     <div className="docs-shell">
@@ -39,9 +78,17 @@ export function App() {
           </a>
           <label className="version-picker">
             <span>Version</span>
-            <select className="version-select" aria-label="Documentation version" defaultValue="latest">
-              <option value="latest">latest</option>
-              <option value="v0.1.0">v0.1.0</option>
+            <select
+              className="version-select"
+              aria-label="Documentation version"
+              value={docsVersion}
+              onChange={(event) => onVersionChange(event.target.value)}
+            >
+              {docsVersions.map((version) => (
+                <option key={version.id} value={version.id}>
+                  {version.label}
+                </option>
+              ))}
             </select>
           </label>
         </div>
@@ -93,7 +140,9 @@ export function App() {
 
         <main className="content-panel">
           <section className="doc-hero" aria-labelledby="page-title">
-            <p className="eyebrow">{activePage.group}</p>
+            <p className="eyebrow">
+              {activePage.group} / {activeVersion.label}
+            </p>
             <h1 id="page-title">{activePage.title}</h1>
             <p>{activePage.description}</p>
           </section>
@@ -122,7 +171,7 @@ export function App() {
   );
 }
 
-function filterPages(query: string): DocsPage[] {
+function filterPages(query: string, docsPages: DocsPage[]): DocsPage[] {
   const normalized = query.trim().toLowerCase();
   if (!normalized) {
     return docsPages;

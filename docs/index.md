@@ -1,4 +1,6 @@
-# agent-fleet v0.1.0 Docs
+# agent-fleet Docs
+
+Latest docs track the current main branch.
 
 agent-fleet is a Steward Agent control plane for coordinating named Worker Agents across projects, worktrees, sessions, remote nodes, decisions, recovery, and memory.
 
