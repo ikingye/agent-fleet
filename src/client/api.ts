@@ -65,6 +65,24 @@ export interface SendStewardMessageResponse {
   stewardMessage: StewardMessage;
 }
 
+export interface ClientConversation {
+  id: string;
+  title?: string | null;
+  projectName?: string | null;
+  workspacePath?: string | null;
+  goalId?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export interface ListConversationsResponse {
+  conversations?: ClientConversation[];
+}
+
+export interface ConversationMessagesResponse {
+  messages?: StewardMessage[];
+}
+
 export type RegisterExecutionNodePayload = Omit<ExecutionNode, "id" | "createdAt" | "updatedAt">;
 
 export interface AcquireGithubDeployKeyLeasePayload {
@@ -165,6 +183,90 @@ export async function createGoal(payload: CreateGoalPayload): Promise<Goal> {
 }
 
 export async function sendStewardMessage(payload: SendStewardMessagePayload): Promise<SendStewardMessageResponse> {
+  return sendStewardMessageViaLegacyEndpoint(payload);
+}
+
+function isCompatibilityFallback(response: Response): boolean {
+  return response.status === 404 || response.status === 405;
+}
+
+export async function fetchConversations(): Promise<ClientConversation[] | null> {
+  const response = await fetch("/api/conversations", {
+    method: "GET"
+  });
+
+  if (isCompatibilityFallback(response)) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch conversations.");
+  }
+
+  const data = (await response.json()) as ListConversationsResponse;
+
+  return Array.isArray(data.conversations) ? data.conversations : [];
+}
+
+export async function fetchConversationMessages(conversationId: string): Promise<StewardMessage[] | null> {
+  const response = await fetch(`/api/conversations/${conversationId}/messages`, {
+    method: "GET"
+  });
+
+  if (isCompatibilityFallback(response)) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error("Failed to fetch conversation messages.");
+  }
+
+  const data = (await response.json()) as ConversationMessagesResponse;
+
+  return Array.isArray(data.messages) ? data.messages : [];
+}
+
+export async function sendConversationMessage(
+  conversationId: string,
+  payload: SendStewardMessagePayload
+): Promise<SendStewardMessageResponse | null> {
+  const response = await fetch(`/api/conversations/${conversationId}/messages`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (isCompatibilityFallback(response)) {
+    return null;
+  }
+
+  if (!response.ok) {
+    throw new Error("Failed to send conversation message.");
+  }
+
+  return response.json() as Promise<SendStewardMessageResponse>;
+}
+
+export async function sendStewardConversationMessage(
+  payload: SendStewardMessagePayload,
+  conversationId?: string | null
+): Promise<SendStewardMessageResponse> {
+  if (conversationId !== undefined && conversationId !== null && conversationId !== "") {
+    const conversationResponse = await sendConversationMessage(conversationId, payload);
+
+    if (conversationResponse !== null) {
+      return conversationResponse;
+    }
+  }
+
+  return sendStewardMessageViaLegacyEndpoint(payload);
+}
+
+async function sendStewardMessageViaLegacyEndpoint(
+  payload: SendStewardMessagePayload
+): Promise<SendStewardMessageResponse> {
   const response = await fetch("/api/steward/messages", {
     method: "POST",
     headers: {

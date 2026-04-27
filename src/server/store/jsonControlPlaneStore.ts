@@ -6,6 +6,9 @@ import type {
   AgentRole,
   ArtifactKind,
   ControlPlaneEvent,
+  Conversation,
+  ConversationBinding,
+  ConversationTransport,
   DashboardData,
   DecisionCorrection,
   DecisionRisk,
@@ -13,6 +16,9 @@ import type {
   DeliveryReport,
   DeliveryStatus,
   ExecutionNode,
+  MessageDelivery,
+  MessageDeliveryDirection,
+  MessageDeliveryStatus,
   Goal,
   GoalStatus,
   GithubDeployKeyCleanupStatus,
@@ -34,10 +40,17 @@ import type {
   WorkerSessionStatus
 } from "../../shared/types.js";
 
-interface ControlPlaneState extends Omit<DashboardData, "stewardMessages" | "workerReports"> {
+interface ControlPlaneState
+  extends Omit<
+    DashboardData,
+    "stewardMessages" | "workerReports" | "conversations" | "conversationBindings" | "messageDeliveries"
+  > {
   version: 1;
   stewardMessages: StewardMessage[];
   workerReports: WorkerReport[];
+  conversations: Conversation[];
+  conversationBindings: ConversationBinding[];
+  messageDeliveries: MessageDelivery[];
 }
 
 export interface CreateGoalInput {
@@ -204,17 +217,71 @@ export interface RecordDeliveryReportInput {
   resourceId: string | null;
 }
 
+export interface UpsertConversationInput {
+  id?: string;
+  transport: ConversationTransport;
+  projectName: string | null;
+  workspacePath: string | null;
+  externalConversationId?: string | null;
+  title?: string | null;
+}
+
+export interface ListConversationsFilter {
+  transport?: ConversationTransport;
+  projectName?: string;
+  workspacePath?: string;
+}
+
+export interface BindConversationInput {
+  conversationId: string;
+  projectName: string | null;
+  workspacePath: string | null;
+  goalId: string | null;
+}
+
+export interface ListConversationBindingsFilter {
+  conversationId?: string;
+  projectName?: string;
+  workspacePath?: string;
+  goalId?: string;
+}
+
+export interface RecordMessageDeliveryInput {
+  conversationId: string;
+  stewardMessageId: string | null;
+  transport?: ConversationTransport;
+  direction: MessageDeliveryDirection;
+  externalMessageId?: string | null;
+  idempotencyKey?: string | null;
+  deliveryStatus: MessageDeliveryStatus;
+}
+
+export interface RecordMessageDeliveryResult {
+  delivery: MessageDelivery;
+  duplicate: boolean;
+  duplicateOf: string | null;
+}
+
 export interface RecordStewardMessageInput {
   role: StewardMessageRole;
   projectName: string | null;
   workspacePath: string | null;
   goalId: string | null;
+  conversationId?: string | null;
+  transport?: ConversationTransport | null;
+  externalMessageId?: string | null;
+  idempotencyKey?: string | null;
+  senderDisplay?: string | null;
+  deliveryStatus?: MessageDeliveryStatus | null;
   body: string;
 }
 
 export interface ListStewardMessagesFilter {
+  conversationId?: string;
   projectName?: string;
   workspacePath?: string;
+  goalId?: string;
+  transport?: ConversationTransport;
 }
 
 function now(): string {
@@ -235,6 +302,9 @@ function emptyState(): ControlPlaneState {
     stewardCheckpoints: [],
     stewardMessages: [],
     workerReports: [],
+    conversations: [],
+    conversationBindings: [],
+    messageDeliveries: [],
     agentArtifacts: [],
     reviews: [],
     deliveryReports: [],
@@ -256,8 +326,11 @@ function parseState(raw: string): ControlPlaneState {
     githubDeployKeyLeases: (parsed.githubDeployKeyLeases ?? []).map(normalizeGithubDeployKeyLease),
     worktreeAssignments: parsed.worktreeAssignments ?? [],
     stewardCheckpoints: parsed.stewardCheckpoints ?? [],
-    stewardMessages: parsed.stewardMessages ?? [],
+    stewardMessages: (parsed.stewardMessages ?? []).map(normalizeStewardMessage),
     workerReports: parsed.workerReports ?? [],
+    conversations: parsed.conversations ?? [],
+    conversationBindings: parsed.conversationBindings ?? [],
+    messageDeliveries: parsed.messageDeliveries ?? [],
     agentArtifacts: parsed.agentArtifacts ?? [],
     reviews: parsed.reviews ?? [],
     deliveryReports: parsed.deliveryReports ?? [],
@@ -282,6 +355,18 @@ function normalizeExecutionNode(
     ...node,
     tags: normalizeTags(node.tags),
     capacity: normalizeCapacity(node.capacity)
+  };
+}
+
+function normalizeStewardMessage(message: StewardMessage): StewardMessage {
+  return {
+    ...message,
+    conversationId: message.conversationId ?? null,
+    transport: message.transport ?? null,
+    externalMessageId: message.externalMessageId ?? null,
+    idempotencyKey: message.idempotencyKey ?? null,
+    senderDisplay: message.senderDisplay ?? null,
+    deliveryStatus: message.deliveryStatus ?? null
   };
 }
 
@@ -320,6 +405,15 @@ function normalizeCapacity(capacity: unknown): number {
   }
 
   return Math.max(1, Math.floor(capacity));
+}
+
+function nullableString(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
 }
 
 function addUniqueWorkerSession(lease: GithubDeployKeyLease, workerSessionId: string): void {
@@ -399,6 +493,9 @@ export class JsonControlPlaneStore {
       stewardCheckpoints: [...this.state.stewardCheckpoints],
       workerReports: [...this.state.workerReports],
       stewardMessages: [...this.state.stewardMessages],
+      conversations: [...this.state.conversations],
+      conversationBindings: [...this.state.conversationBindings],
+      messageDeliveries: [...this.state.messageDeliveries],
       agentArtifacts: [...this.state.agentArtifacts],
       reviews: [...this.state.reviews],
       deliveryReports: [...this.state.deliveryReports],
@@ -912,17 +1009,271 @@ export class JsonControlPlaneStore {
     return checkpoint;
   }
 
+  async upsertConversation(input: UpsertConversationInput): Promise<Conversation> {
+    const externalConversationId = nullableString(input.externalConversationId);
+    const title = nullableString(input.title);
+    const existing =
+      input.id === undefined
+        ? externalConversationId === null
+          ? undefined
+          : this.state.conversations.find(
+              (conversation) =>
+                conversation.transport === input.transport && conversation.externalConversationId === externalConversationId
+            )
+        : this.state.conversations.find((conversation) => conversation.id === input.id);
+
+    if (existing !== undefined) {
+      existing.transport = input.transport;
+      existing.projectName = input.projectName;
+      existing.workspacePath = input.workspacePath;
+      existing.externalConversationId = externalConversationId;
+      existing.title = title;
+      existing.updatedAt = now();
+      this.addEvent({
+        type: "conversation.updated",
+        goalId: null,
+        decisionId: null,
+        workerSessionId: null,
+        message: `Conversation updated: ${existing.transport}`,
+        metadata: {
+          conversationId: existing.id,
+          transport: existing.transport,
+          projectName: existing.projectName,
+          workspacePath: existing.workspacePath,
+          externalConversationId: existing.externalConversationId,
+          title: existing.title
+        }
+      });
+      await this.save();
+      return existing;
+    }
+
+    const timestamp = now();
+    const conversation: Conversation = {
+      id: input.id ?? randomUUID(),
+      transport: input.transport,
+      projectName: input.projectName,
+      workspacePath: input.workspacePath,
+      externalConversationId,
+      title,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.state.conversations.push(conversation);
+    this.addEvent({
+      type: "conversation.created",
+      goalId: null,
+      decisionId: null,
+      workerSessionId: null,
+      message: `Conversation created: ${conversation.transport}`,
+      metadata: {
+        conversationId: conversation.id,
+        transport: conversation.transport,
+        projectName: conversation.projectName,
+        workspacePath: conversation.workspacePath,
+        externalConversationId: conversation.externalConversationId,
+        title: conversation.title
+      }
+    });
+    await this.save();
+
+    return conversation;
+  }
+
+  async listConversations(filter: ListConversationsFilter = {}): Promise<Conversation[]> {
+    return this.state.conversations.filter((conversation) => {
+      if (filter.transport !== undefined && conversation.transport !== filter.transport) {
+        return false;
+      }
+
+      if (filter.projectName !== undefined && conversation.projectName !== filter.projectName) {
+        return false;
+      }
+
+      if (filter.workspacePath !== undefined && conversation.workspacePath !== filter.workspacePath) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async bindConversation(input: BindConversationInput): Promise<ConversationBinding> {
+    this.findConversation(input.conversationId);
+    if (input.goalId !== null) {
+      this.findGoal(input.goalId);
+    }
+
+    const existing = this.state.conversationBindings.find(
+      (binding) =>
+        binding.conversationId === input.conversationId &&
+        binding.projectName === input.projectName &&
+        binding.workspacePath === input.workspacePath &&
+        binding.goalId === input.goalId
+    );
+
+    if (existing !== undefined) {
+      existing.updatedAt = now();
+      await this.save();
+      return existing;
+    }
+
+    const timestamp = now();
+    const binding: ConversationBinding = {
+      id: randomUUID(),
+      conversationId: input.conversationId,
+      projectName: input.projectName,
+      workspacePath: input.workspacePath,
+      goalId: input.goalId,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.state.conversationBindings.push(binding);
+    this.addEvent({
+      type: "conversation.bound",
+      goalId: binding.goalId,
+      decisionId: null,
+      workerSessionId: null,
+      message: "Conversation binding recorded",
+      metadata: {
+        bindingId: binding.id,
+        conversationId: binding.conversationId,
+        projectName: binding.projectName,
+        workspacePath: binding.workspacePath,
+        goalId: binding.goalId
+      }
+    });
+    await this.save();
+
+    return binding;
+  }
+
+  async listConversationBindings(filter: ListConversationBindingsFilter = {}): Promise<ConversationBinding[]> {
+    return this.state.conversationBindings.filter((binding) => {
+      if (filter.conversationId !== undefined && binding.conversationId !== filter.conversationId) {
+        return false;
+      }
+
+      if (filter.projectName !== undefined && binding.projectName !== filter.projectName) {
+        return false;
+      }
+
+      if (filter.workspacePath !== undefined && binding.workspacePath !== filter.workspacePath) {
+        return false;
+      }
+
+      if (filter.goalId !== undefined && binding.goalId !== filter.goalId) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async recordMessageDelivery(input: RecordMessageDeliveryInput): Promise<RecordMessageDeliveryResult> {
+    const conversation = this.findConversation(input.conversationId);
+    const stewardMessage = input.stewardMessageId === null ? null : this.findStewardMessage(input.stewardMessageId);
+    const transport = input.transport ?? conversation.transport;
+    const externalMessageId = nullableString(input.externalMessageId);
+    const idempotencyKey = nullableString(input.idempotencyKey);
+
+    if (
+      stewardMessage?.conversationId !== undefined &&
+      stewardMessage.conversationId !== null &&
+      stewardMessage.conversationId !== conversation.id
+    ) {
+      throw new Error(`Steward message ${stewardMessage.id} does not belong to conversation ${conversation.id}`);
+    }
+
+    const duplicate =
+      input.direction === "inbound"
+        ? this.state.messageDeliveries.find(
+            (delivery) =>
+              delivery.conversationId === conversation.id &&
+              delivery.transport === transport &&
+              delivery.direction === input.direction &&
+              ((idempotencyKey !== null && delivery.idempotencyKey === idempotencyKey) ||
+                (externalMessageId !== null && delivery.externalMessageId === externalMessageId))
+          )
+        : undefined;
+
+    if (duplicate !== undefined) {
+      this.addEvent({
+        type: "message_delivery.duplicate_detected",
+        goalId: stewardMessage?.goalId ?? null,
+        decisionId: null,
+        workerSessionId: null,
+        message: "Duplicate inbound message delivery detected",
+        metadata: {
+          deliveryId: duplicate.id,
+          conversationId: duplicate.conversationId,
+          stewardMessageId: duplicate.stewardMessageId,
+          transport: duplicate.transport,
+          externalMessageId,
+          idempotencyKey
+        }
+      });
+      await this.save();
+      return { delivery: duplicate, duplicate: true, duplicateOf: duplicate.id };
+    }
+
+    const timestamp = now();
+    const delivery: MessageDelivery = {
+      id: randomUUID(),
+      conversationId: conversation.id,
+      stewardMessageId: stewardMessage?.id ?? null,
+      transport,
+      direction: input.direction,
+      externalMessageId,
+      idempotencyKey,
+      deliveryStatus: input.deliveryStatus,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    this.state.messageDeliveries.push(delivery);
+    this.addEvent({
+      type: "message_delivery.recorded",
+      goalId: stewardMessage?.goalId ?? null,
+      decisionId: null,
+      workerSessionId: null,
+      message: `Message delivery recorded: ${delivery.deliveryStatus}`,
+      metadata: {
+        deliveryId: delivery.id,
+        conversationId: delivery.conversationId,
+        stewardMessageId: delivery.stewardMessageId,
+        transport: delivery.transport,
+        direction: delivery.direction,
+        externalMessageId: delivery.externalMessageId,
+        idempotencyKey: delivery.idempotencyKey,
+        deliveryStatus: delivery.deliveryStatus
+      }
+    });
+    await this.save();
+
+    return { delivery, duplicate: false, duplicateOf: null };
+  }
+
   async recordStewardMessage(input: RecordStewardMessageInput): Promise<StewardMessage> {
     if (input.goalId !== null) {
       this.findGoal(input.goalId);
     }
 
+    const conversation = input.conversationId === null || input.conversationId === undefined ? null : this.findConversation(input.conversationId);
     const message: StewardMessage = {
       id: randomUUID(),
       role: input.role,
       projectName: input.projectName,
       workspacePath: input.workspacePath,
       goalId: input.goalId,
+      conversationId: conversation?.id ?? null,
+      transport: input.transport ?? conversation?.transport ?? null,
+      externalMessageId: nullableString(input.externalMessageId),
+      idempotencyKey: nullableString(input.idempotencyKey),
+      senderDisplay: nullableString(input.senderDisplay),
+      deliveryStatus: input.deliveryStatus ?? null,
       body: input.body,
       createdAt: now()
     };
@@ -937,8 +1288,14 @@ export class JsonControlPlaneStore {
       metadata: {
         stewardMessageId: message.id,
         role: message.role,
+        conversationId: message.conversationId,
+        transport: message.transport,
+        externalMessageId: message.externalMessageId,
+        idempotencyKey: message.idempotencyKey,
         projectName: message.projectName,
-        workspacePath: message.workspacePath
+        workspacePath: message.workspacePath,
+        senderDisplay: message.senderDisplay,
+        deliveryStatus: message.deliveryStatus
       }
     });
     await this.save();
@@ -948,11 +1305,23 @@ export class JsonControlPlaneStore {
 
   async listStewardMessages(filter: ListStewardMessagesFilter = {}): Promise<StewardMessage[]> {
     return this.state.stewardMessages.filter((message) => {
+      if (filter.conversationId !== undefined && message.conversationId !== filter.conversationId) {
+        return false;
+      }
+
       if (filter.projectName !== undefined && message.projectName !== filter.projectName) {
         return false;
       }
 
       if (filter.workspacePath !== undefined && message.workspacePath !== filter.workspacePath) {
+        return false;
+      }
+
+      if (filter.goalId !== undefined && message.goalId !== filter.goalId) {
+        return false;
+      }
+
+      if (filter.transport !== undefined && message.transport !== filter.transport) {
         return false;
       }
 
@@ -1274,6 +1643,24 @@ export class JsonControlPlaneStore {
     }
 
     return session;
+  }
+
+  private findConversation(conversationId: string): Conversation {
+    const conversation = this.state.conversations.find((item) => item.id === conversationId);
+    if (conversation === undefined) {
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+
+    return conversation;
+  }
+
+  private findStewardMessage(stewardMessageId: string): StewardMessage {
+    const message = this.state.stewardMessages.find((item) => item.id === stewardMessageId);
+    if (message === undefined) {
+      throw new Error(`Steward message not found: ${stewardMessageId}`);
+    }
+
+    return message;
   }
 
   private findGithubDeployKeyLease(leaseId: string): GithubDeployKeyLease {

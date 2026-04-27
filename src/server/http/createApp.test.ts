@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./createApp.js";
+import { signWebhookConnectorRequest } from "../connectors/webhookConnector.js";
 import type { RemoteCommandRunner } from "../remote/remoteNodeProbe.js";
 import type { RemoteWorkspaceProvisioner } from "../remote/remoteWorkspaceProvisioner.js";
 import type { WorkerAdapter } from "../workers/commandWorkerAdapter.js";
@@ -265,6 +266,338 @@ describe("API routes", () => {
       expect(listResponse.json().messages).toHaveLength(2);
       expect(dashboard.stewardMessages).toHaveLength(2);
       expect(dashboard.stewardMessages.map((message: { role: string }) => message.role)).toEqual(["owner", "steward"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("routes web, CLI, and IM-shaped conversation payloads through the same Steward path", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter
+    });
+
+    try {
+      const cases = [
+        {
+          conversationId: "web-thread",
+          payload: {
+            transport: "web",
+            projectName: "mahjong",
+            workspacePath: "/workspaces/mahjong",
+            body: "Build the web conversation handoff route."
+          }
+        },
+        {
+          conversationId: "cli-thread",
+          payload: {
+            transport: "cli",
+            project: {
+              name: "agent-fleet",
+              workspacePath: "/workspaces/agent-fleet"
+            },
+            message: "Implement the CLI conversation envelope route."
+          }
+        },
+        {
+          conversationId: "im-thread",
+          payload: {
+            transport: "im",
+            project: "support-bot",
+            workspacePath: "/workspaces/support-bot",
+            text: "Add the IM conversation envelope route.",
+            external: {
+              messageId: "im-message-1"
+            }
+          }
+        }
+      ];
+
+      for (const item of cases) {
+        const response = await app.inject({
+          method: "POST",
+          url: `/api/conversations/${item.conversationId}/messages`,
+          payload: item.payload
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toMatchObject({
+          duplicate: false,
+          ownerMessage: {
+            role: "owner",
+            conversationId: item.conversationId,
+            transport: item.payload.transport
+          },
+          stewardMessage: {
+            role: "steward",
+            conversationId: item.conversationId,
+            transport: item.payload.transport
+          }
+        });
+      }
+
+      expect(worker.starts()).toBe(3);
+
+      const conversationsResponse = await app.inject({ method: "GET", url: "/api/conversations?transport=cli" });
+      expect(conversationsResponse.statusCode).toBe(200);
+      expect(conversationsResponse.json().conversations).toEqual([
+        expect.objectContaining({
+          id: "cli-thread",
+          transport: "cli",
+          projectName: "agent-fleet",
+          workspacePath: "/workspaces/agent-fleet",
+          messageCount: 2
+        })
+      ]);
+
+      const messagesResponse = await app.inject({
+        method: "GET",
+        url: "/api/conversations/cli-thread/messages"
+      });
+      expect(messagesResponse.statusCode).toBe(200);
+      expect(messagesResponse.json().messages.map((message: { role: string }) => message.role)).toEqual([
+        "owner",
+        "steward"
+      ]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("blocks actionable conversation messages without a workspace before Worker dispatch", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter
+    });
+
+    try {
+      const response = await app.inject({
+        method: "POST",
+        url: "/api/conversations/web-thread/messages",
+        payload: {
+          transport: "web",
+          projectName: "mahjong",
+          body: "Build the missing workspace safety rail."
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(worker.starts()).toBe(0);
+      expect(response.json()).toMatchObject({
+        duplicate: false,
+        stewardMessage: {
+          role: "steward",
+          conversationId: "web-thread",
+          workspacePath: null
+        }
+      });
+      expect(response.json().stewardMessage.body).toContain("need both projectName and workspacePath");
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      expect(dashboard.goals).toHaveLength(0);
+      expect(dashboard.workerSessions).toHaveLength(0);
+      expect(dashboard.stewardMessages.map((message: { role: string }) => message.role)).toEqual(["owner", "steward"]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("dedupes repeated inbound conversation messages by transport idempotency key", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter
+    });
+
+    try {
+      const payload = {
+        transport: "cli",
+        projectName: "mahjong",
+        workspacePath: "/workspaces/mahjong",
+        body: "Build the idempotent CLI dispatch path.",
+        externalMessageId: "cli-message-42",
+        idempotencyKey: "cli-key-42"
+      };
+      const first = await app.inject({
+        method: "POST",
+        url: "/api/conversations/cli-thread/messages",
+        payload
+      });
+      const second = await app.inject({
+        method: "POST",
+        url: "/api/conversations/cli-thread/messages",
+        payload
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(first.json().duplicate).toBe(false);
+      expect(second.json()).toMatchObject({
+        duplicate: true,
+        ownerMessage: { id: first.json().ownerMessage.id },
+        stewardMessage: { id: first.json().stewardMessage.id }
+      });
+      expect(worker.starts()).toBe(1);
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      expect(dashboard.goals).toHaveLength(1);
+      expect(dashboard.workerSessions).toHaveLength(1);
+      expect(dashboard.stewardMessages).toHaveLength(2);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("returns event-stream headers with initial and heartbeat events", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter
+    });
+
+    try {
+      const response = await app.inject({
+        method: "GET",
+        url: "/api/events"
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["content-type"]).toContain("text/event-stream");
+      expect(response.headers["cache-control"]).toBe("no-cache");
+      expect(response.body).toContain("event: initial");
+      expect(response.body).toContain("event: heartbeat");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("receives signed webhook connector messages through the Steward conversation API", async () => {
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: fakeWorkerAdapter,
+      webhookConnectors: [
+        {
+          id: "wechat-dev",
+          label: "WeChat dev tunnel",
+          transport: "webhook",
+          provider: "wechat-compatible",
+          token: "callback-token",
+          signingSecret: "signing-secret",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          allowedSenderIds: ["wechat-user-1"]
+        }
+      ]
+    });
+
+    try {
+      const rawBody = JSON.stringify({
+        senderId: "wechat-user-1",
+        conversationId: "wechat-room-1",
+        text: "What is the current recovery state?"
+      });
+      const timestamp = "1777256640";
+      const nonce = "nonce-1";
+      const response = await app.inject({
+        method: "POST",
+        url: `/api/connectors/webhook/wechat-dev?timestamp=${timestamp}&nonce=${nonce}&signature=${signWebhookConnectorRequest({
+          secret: "signing-secret",
+          timestamp,
+          nonce,
+          rawBody
+        })}`,
+        payload: rawBody,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        connectorId: "wechat-dev",
+        conversationId: "wechat-room-1",
+        recipientId: "wechat-user-1",
+        messageType: "text"
+      });
+      expect(response.json().text).toContain("/Users/yewang/code/project/mahjong");
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+
+      expect(dashboard.stewardMessages).toHaveLength(2);
+      expect(dashboard.stewardMessages[0]).toMatchObject({
+        role: "owner",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        body: "What is the current recovery state?"
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("dedupes replayed webhook connector messages before dispatching another Worker", async () => {
+    const worker = countingWorkerAdapter();
+    const app = await createApp({
+      statePath: join(dir, "state.json"),
+      workerAdapter: worker.adapter,
+      webhookConnectors: [
+        {
+          id: "wechat-dev",
+          label: "WeChat dev tunnel",
+          transport: "webhook",
+          provider: "wechat-compatible",
+          token: "callback-token",
+          signingSecret: "signing-secret",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong",
+          allowedSenderIds: ["wechat-user-1"]
+        }
+      ]
+    });
+
+    try {
+      const rawBody = JSON.stringify({
+        senderId: "wechat-user-1",
+        conversationId: "wechat-room-1",
+        messageId: "wechat-message-42",
+        text: "Build the replay-safe webhook dispatch path."
+      });
+      const timestamp = "1777256640";
+      const nonce = "nonce-replay";
+      const url = `/api/connectors/webhook/wechat-dev?timestamp=${timestamp}&nonce=${nonce}&signature=${signWebhookConnectorRequest({
+        secret: "signing-secret",
+        timestamp,
+        nonce,
+        rawBody
+      })}`;
+      const first = await app.inject({
+        method: "POST",
+        url,
+        payload: rawBody,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+      const second = await app.inject({
+        method: "POST",
+        url,
+        payload: rawBody,
+        headers: {
+          "content-type": "application/json"
+        }
+      });
+
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect(first.json().duplicate).toBe(false);
+      expect(second.json().duplicate).toBe(true);
+      expect(worker.starts()).toBe(1);
+
+      const dashboard = (await app.inject({ method: "GET", url: "/api/dashboard" })).json();
+      expect(dashboard.goals).toHaveLength(1);
+      expect(dashboard.workerSessions).toHaveLength(1);
+      expect(dashboard.stewardMessages).toHaveLength(2);
     } finally {
       await app.close();
     }

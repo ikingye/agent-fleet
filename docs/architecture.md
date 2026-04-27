@@ -6,6 +6,7 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 
 - `src/client`: React dashboard for Steward Chat, Steward Intake, goals, Steward decision review, corrections, secondary Worker session audit details, remote nodes, worktrees, events, and memory.
 - `src/server/http`: Fastify app, route validation, and API composition.
+- `src/server/connectors`: owner-facing transport adapters that map external channels, such as IM webhooks, into Steward Chat.
 - `src/server/steward`: orchestration behavior that turns human goals into decisions and Worker instructions.
 - `src/server/store`: durable state for goals, decisions, Worker sessions, corrections, memories, execution nodes, worktree assignments, Steward Chat messages, checkpoints, and events.
 - `src/server/workers`: process adapters for Worker Agent commands.
@@ -15,12 +16,13 @@ agent-fleet is split into a browser control plane, a local HTTP API, durable con
 ## Current Flow
 
 1. The browser records owner/Steward chat through `POST /api/steward/messages`, or submits a goal with an explicit `workspacePath` to `POST /api/goals`.
-2. The HTTP layer validates input and calls `StewardRuntime`.
-3. The Steward records an auditable decision.
-4. The Worker adapter launches the configured Worker command or zsh alias in the target workspace.
-5. The store records Worker metadata such as command, cwd, pid, resume id, status, and initial output.
-6. The browser reads `GET /api/dashboard`.
-7. Human corrections go through `POST /api/decisions/:id/corrections` and become both correction records and memory.
+2. Optional IM webhook connectors validate incoming transport metadata, bind messages to a configured `workspacePath`, and forward owner text into the same Steward conversation path.
+3. The HTTP layer validates input and calls `StewardRuntime`.
+4. The Steward records an auditable decision.
+5. The Worker adapter launches the configured Worker command or zsh alias in the target workspace.
+6. The store records Worker metadata such as command, cwd, pid, resume id, status, and initial output.
+7. The browser reads `GET /api/dashboard`.
+8. Human corrections go through `POST /api/decisions/:id/corrections` and become both correction records and memory.
 
 The owner should interact with the Steward, not directly manage many Worker terminals. Worker prompts tell downstream agents to treat Steward instructions as the human owner's instructions.
 
@@ -35,6 +37,12 @@ Corrections should attach to Steward decisions and memory rather than low-level 
 The first implementation uses `.agent-fleet/control-plane.json`. This keeps the project easy to inspect and test. A future database can preserve the same domain records while improving concurrency, querying, and log volume.
 
 Steward Chat is product state. Owner and Steward messages are persisted in the `stewardMessages` array and surfaced through the dashboard and recovery flow.
+
+## Connector Boundary
+
+Connectors are transport adapters, not separate Steward implementations. A connector accepts an external message, verifies transport-specific trust signals, maps the message into `{ projectName, workspacePath, body }`, calls the Steward conversation loop, and maps the Steward reply back to the external channel's response format.
+
+The first connector is a generic webhook adapter that can sit behind a WeChat-compatible gateway without requiring real WeChat credentials in tests or local development. Its callback token verification and HMAC request signature are an MVP placeholder; real WeChat API calls and account-specific callback rules should remain behind a future provider adapter. Connector public configuration must redact secrets, and each connector must bind to an explicit target `workspacePath` so IM-originated work is scoped like browser-originated work.
 
 ## Lifecycle Supervision
 
