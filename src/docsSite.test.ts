@@ -28,7 +28,7 @@ function collectTextFiles(dir: string): string[] {
       return collectTextFiles(path);
     }
 
-    return /\.(css|html|md|mts|ts|tsx|yml|yaml|json)$/.test(entry) ? [path] : [];
+    return /\.(css|html|js|md|mts|ts|tsx|yml|yaml|json)$/.test(entry) ? [path] : [];
   });
 }
 
@@ -138,8 +138,9 @@ describe("docs site", () => {
     expect(limitations).not.toMatch(/Docs publishing/i);
   });
 
-  it("keeps docs and Pages workflow free of private local references", () => {
+  it("keeps docs and Pages workflow free of private local references and terminal logs", () => {
     const scannedFiles = [
+      join(root, "README.md"),
       ...collectTextFiles(docsDir),
       ...collectTextFiles(join(root, "docs-site")),
       join(root, ".github", "workflows", "pages.yml")
@@ -150,6 +151,9 @@ describe("docs site", () => {
       { label: "remote worker host alias", pattern: /\baicp-hhht-[\w-]+\b/ },
       { label: "private IPv4 address", pattern: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/ },
       { label: "local host example", pattern: /\bmac-mini\.local\b/ },
+      { label: "malloc stack logging environment", pattern: /\bMallocStackLogging\b/ },
+      { label: "malloc stack logging warning", pattern: /can't turn off malloc stack logging/i },
+      { label: "codex pid terminal log", pattern: /\bcodex\((?:<pid>|\d+)\)/i },
       { label: "raw secret assignment", pattern: /(?:TOKEN|SECRET|KEY)=["']?[A-Za-z0-9_/-]{16,}/ }
     ];
 

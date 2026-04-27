@@ -20,7 +20,7 @@ npm ci
 npm run build
 ```
 
-Do not run `npm install agent-fleet`. The npm package name `agent-fleet` is already used by another project, and this repository intentionally keeps `"private": true` in `package.json`.
+This repository is public under Apache-2.0, but its package remains `private: true` and is not published to npm. Do not run `npm install agent-fleet`. The npm package name `agent-fleet` is already used by another project. Use the source checkout until the owner chooses a package name and publishing plan.
 
 Run the full verification suite after dependencies are installed:
 

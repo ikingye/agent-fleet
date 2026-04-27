@@ -80,7 +80,7 @@ Typical outcomes:
 
 ## What Recovery Does Not Do Yet
 
-v0.1.0 recovery is inspectable and useful, but not a production-grade distributed supervisor. It does not yet provide:
+v0.1.0 recovery is inspectable and useful, but not a hardened distributed supervisor. It does not yet provide:
 
 - Multi-user conflict resolution.
 - Automatic merge decisions.
