@@ -249,6 +249,19 @@ export interface StewardMessage {
   createdAt: string;
 }
 
+export interface StewardConversation {
+  id: string;
+  projectName: string | null;
+  workspacePath: string | null;
+  goalId: string | null;
+  transport: ConversationTransport | null;
+  title?: string | null;
+  externalConversationId?: string | null;
+  messageCount: number;
+  createdAt: string;
+  lastMessageAt: string;
+}
+
 export interface RecoveryWorkerSession {
   id: string;
   goalId: string;

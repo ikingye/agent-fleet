@@ -3,6 +3,10 @@ import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import type { StewardRuntime } from "./stewardRuntime.js";
 
 export interface StewardOwnerMessageInput {
+  conversationId?: string | null;
+  transport?: string | null;
+  externalMessageId?: string | null;
+  idempotencyKey?: string | null;
   projectName: string | null;
   workspacePath: string | null;
   goalId: string | null;
@@ -22,6 +26,11 @@ interface StewardMessageLoopOptions {
 const activeGoalStatuses = new Set(["queued", "running", "blocked"]);
 const activeWorkerStatuses = new Set(["starting", "running", "paused"]);
 
+interface StewardMessageContext {
+  conversationId: string | null;
+  transport: string | null;
+}
+
 export class StewardMessageLoop {
   constructor(private readonly options: StewardMessageLoopOptions) {}
 
@@ -30,8 +39,15 @@ export class StewardMessageLoop {
     const goal = input.goalId === null ? null : findGoal(dashboard, input.goalId);
     const projectName = goal?.projectName ?? input.projectName;
     const workspacePath = goal?.workspacePath ?? input.workspacePath;
+    const context = {
+      conversationId: input.conversationId ?? null,
+      transport: input.transport ?? null
+    };
     const ownerMessage = await this.options.store.recordStewardMessage({
       role: "owner",
+      ...context,
+      externalMessageId: input.externalMessageId ?? null,
+      idempotencyKey: input.idempotencyKey ?? null,
       projectName,
       workspacePath,
       goalId: input.goalId,
@@ -41,20 +57,21 @@ export class StewardMessageLoop {
     if (goal !== null) {
       return {
         ownerMessage,
-        stewardMessage: await this.recordGoalUpdateResponse(goal, projectName, workspacePath, input.body)
+        stewardMessage: await this.recordGoalUpdateResponse(goal, projectName, workspacePath, input.body, context)
       };
     }
 
     if (isStatusOrRecoveryMessage(input.body) || !isActionableMessage(input.body)) {
       return {
         ownerMessage,
-        stewardMessage: await this.recordStatusResponse(projectName, workspacePath, null)
+        stewardMessage: await this.recordStatusResponse(projectName, workspacePath, null, context)
       };
     }
 
     if (projectName === null || workspacePath === null) {
       const stewardMessage = await this.options.store.recordStewardMessage({
         role: "steward",
+        ...context,
         projectName,
         workspacePath,
         goalId: null,
@@ -73,6 +90,7 @@ export class StewardMessageLoop {
     });
     const stewardMessage = await this.options.store.recordStewardMessage({
       role: "steward",
+      ...context,
       projectName,
       workspacePath,
       goalId: createdGoal.id,
@@ -86,7 +104,8 @@ export class StewardMessageLoop {
     goal: Goal,
     projectName: string | null,
     workspacePath: string | null,
-    body: string
+    body: string,
+    context: StewardMessageContext
   ): Promise<StewardMessage> {
     const dashboard = await this.options.store.dashboard();
     const activeSessions = activeWorkerSessionsForGoal(dashboard, goal.id);
@@ -126,6 +145,7 @@ export class StewardMessageLoop {
 
     return this.options.store.recordStewardMessage({
       role: "steward",
+      ...context,
       projectName,
       workspacePath,
       goalId: goal.id,
@@ -136,12 +156,14 @@ export class StewardMessageLoop {
   private async recordStatusResponse(
     projectName: string | null,
     workspacePath: string | null,
-    goalId: string | null
+    goalId: string | null,
+    context: StewardMessageContext
   ): Promise<StewardMessage> {
     const dashboard = await this.options.store.dashboard();
 
     return this.options.store.recordStewardMessage({
       role: "steward",
+      ...context,
       projectName,
       workspacePath,
       goalId,

@@ -277,9 +277,11 @@ export interface RecordStewardMessageInput {
 }
 
 export interface ListStewardMessagesFilter {
+  conversationId?: string;
   projectName?: string;
   workspacePath?: string;
-  conversationId?: string;
+  goalId?: string;
+  transport?: ConversationTransport;
 }
 
 function now(): string {
@@ -1286,12 +1288,12 @@ export class JsonControlPlaneStore {
       metadata: {
         stewardMessageId: message.id,
         role: message.role,
-        projectName: message.projectName,
-        workspacePath: message.workspacePath,
         conversationId: message.conversationId,
         transport: message.transport,
         externalMessageId: message.externalMessageId,
         idempotencyKey: message.idempotencyKey,
+        projectName: message.projectName,
+        workspacePath: message.workspacePath,
         senderDisplay: message.senderDisplay,
         deliveryStatus: message.deliveryStatus
       }
@@ -1303,6 +1305,10 @@ export class JsonControlPlaneStore {
 
   async listStewardMessages(filter: ListStewardMessagesFilter = {}): Promise<StewardMessage[]> {
     return this.state.stewardMessages.filter((message) => {
+      if (filter.conversationId !== undefined && message.conversationId !== filter.conversationId) {
+        return false;
+      }
+
       if (filter.projectName !== undefined && message.projectName !== filter.projectName) {
         return false;
       }
@@ -1311,7 +1317,11 @@ export class JsonControlPlaneStore {
         return false;
       }
 
-      if (filter.conversationId !== undefined && message.conversationId !== filter.conversationId) {
+      if (filter.goalId !== undefined && message.goalId !== filter.goalId) {
+        return false;
+      }
+
+      if (filter.transport !== undefined && message.transport !== filter.transport) {
         return false;
       }
 
