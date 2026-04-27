@@ -41,6 +41,9 @@ The full product brief lives in [docs/product-brief.md](docs/product-brief.md).
 - The Steward must put the Worker Name at the top of the Worker prompt and require the Worker to use that exact name as the heading of its final report.
 - If the underlying spawn system assigns a random nickname, that nickname is secondary; the explicit Worker Name is the source of truth.
 - The Steward should not stop merely because one subtask finished. It should ask what remains and continue with the next Worker or verification step unless blocked.
+- Every spawned Worker must use a named branch and worktree that identify the task purpose.
+- Review/merge Workers must delete branches and worktrees after they are merged into `main` or `master` and verified safe to remove. Never delete unmerged branches or worktrees.
+- Blocked or unmerged branches and worktrees must be retained with an explicit blocker reason and owner in the Steward report or durable audit record.
 
 ## Code Organization
 
