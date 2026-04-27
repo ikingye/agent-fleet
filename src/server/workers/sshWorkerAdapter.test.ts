@@ -196,6 +196,43 @@ describe("RemoteSshWorkerAdapter", () => {
 
     expect(result.pid).toBe(7070);
   });
+
+  it("filters known macOS Codex malloc diagnostics from runner output and completion", async () => {
+    const runner = new CapturingRunner({
+      status: "running",
+      output:
+        "codex(84652) MallocStackLogging: can't turn off malloc stack logging because it was not enabled.\nagent-fleet remote pid: 7071\n",
+      pid: null,
+      completion: Promise.resolve({
+        status: "completed",
+        output:
+          "codex(84653) MallocStackLogging: can't turn off malloc stack logging because it was not enabled.\nreal remote stderr\n"
+      })
+    });
+    const adapter = new RemoteSshWorkerAdapter({
+      sshHost: "worker@builder.example",
+      workerCommand: "codexyoloproxy",
+      runner
+    });
+
+    const result = await adapter.start({
+      goalTitle: "Remote offload",
+      prompt: "Run remotely.",
+      cwd: "/srv/agent-fleet/worktrees/remote"
+    });
+
+    expect(result.initialOutput).not.toContain("MallocStackLogging");
+    expect(result.pid).toBe(7071);
+    expect(result.completion).toBeDefined();
+    if (result.completion === undefined) {
+      throw new Error("Expected running SSH result to include completion");
+    }
+
+    const completion = await result.completion;
+
+    expect(completion.output).not.toContain("MallocStackLogging");
+    expect(completion.output).toContain("real remote stderr");
+  });
 });
 
 describe("ChildProcessSshWorkerRunner", () => {

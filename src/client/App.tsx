@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import type { ExecutionNode, StewardDecision, WorkerReport, WorkerSession } from "../shared/types.js";
+import { filterKnownPlatformNoise } from "../shared/outputSanitizer.js";
 import {
   type ClientDashboardData,
   type ClientConversation,
@@ -60,7 +61,7 @@ function displayPath(path: string): string {
 }
 
 function displayText(value: string): string {
-  return redactGenericHomePaths(redactCurrentHomePath(value));
+  return filterKnownPlatformNoise(redactGenericHomePaths(redactCurrentHomePath(value)));
 }
 
 function homePathPrefix(path: string): string | null {

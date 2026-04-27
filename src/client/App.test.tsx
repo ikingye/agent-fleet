@@ -608,6 +608,32 @@ describe("App", () => {
     expect(within(history).getByText("stack trace from oldest failure")).toBeInTheDocument();
   });
 
+  it("filters known macOS Codex malloc diagnostics from Worker debug output", async () => {
+    const noisyDashboard = {
+      ...dashboard,
+      workerSessions: [
+        {
+          ...dashboard.workerSessions[0],
+          lastOutput: [
+            "codex(84652) MallocStackLogging: can't turn off malloc stack logging because it was not enabled.",
+            "real stderr line"
+          ].join("\n")
+        }
+      ]
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(noisyDashboard)));
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.click(await screen.findByRole("tab", { name: "Workers" }));
+    const workerPanel = await screen.findByRole("region", { name: "Worker Operations" });
+    await user.click(within(workerPanel).getByText("Debug details"));
+
+    expect(within(workerPanel).queryByText(/MallocStackLogging/)).not.toBeInTheDocument();
+    expect(within(workerPanel).getByText("real stderr line")).toBeInTheDocument();
+  });
+
   it("submits a new goal to the Steward Agent", async () => {
     const fetchMock = vi
       .fn()

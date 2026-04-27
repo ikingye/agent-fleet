@@ -40,6 +40,31 @@ describe("CommandWorkerAdapter", () => {
     expect(result.pid).toEqual(expect.any(Number));
   });
 
+  it("filters known macOS Codex malloc diagnostics from captured Worker output", async () => {
+    const adapter = new CommandWorkerAdapter(process.execPath, [
+      "-e",
+      [
+        "process.stdin.resume();",
+        "process.stdin.on('end', () => {",
+        "  console.error(\"codex(84652) MallocStackLogging: can't turn off malloc stack logging because it was not enabled.\");",
+        "  console.log('resume id: clean-output-1');",
+        "  console.error('real stderr line');",
+        "});"
+      ].join(" ")
+    ]);
+
+    const result = await adapter.start({
+      goalTitle: "Filter platform diagnostics",
+      prompt: "Run worker.",
+      cwd: process.cwd()
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.resumeId).toBe("clean-output-1");
+    expect(result.initialOutput).not.toContain("MallocStackLogging");
+    expect(result.initialOutput).toContain("real stderr line");
+  });
+
   it("fails gracefully when the Worker command exits before accepting stdin", async () => {
     const adapter = new CommandWorkerAdapter(process.execPath, ["-e", "process.exit(0);"]);
 

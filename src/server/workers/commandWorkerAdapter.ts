@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { delimiter, join } from "node:path";
+import { filterKnownPlatformNoise } from "../../shared/outputSanitizer.js";
 import type { WorkerKind, WorkerSessionStatus } from "../../shared/types.js";
 
 const ZSH_ALIAS_LOOKUP_TIMEOUT_MS = 2500;
@@ -177,7 +178,7 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
       settled = true;
       clearTimeout(timer);
 
-      const initialOutput = `${output}${extraOutput}`;
+      const initialOutput = filterKnownPlatformNoise(`${output}${extraOutput}`);
       resolve({
         command: input.displayCommand,
         cwd: input.cwd,
@@ -197,7 +198,7 @@ function startWorkerProcess(input: StartWorkerProcessInput): Promise<WorkerStart
       completionSettled = true;
       complete({
         status,
-        output: `${output}${extraOutput}`
+        output: filterKnownPlatformNoise(`${output}${extraOutput}`)
       });
     };
 

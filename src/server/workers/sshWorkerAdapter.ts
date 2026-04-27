@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { filterKnownPlatformNoise } from "../../shared/outputSanitizer.js";
 import type { WorkerKind } from "../../shared/types.js";
 import type { WorkerAdapter, WorkerCompletion, WorkerStartInput, WorkerStartResult } from "./commandWorkerAdapter.js";
 
@@ -86,15 +87,22 @@ export class RemoteSshWorkerAdapter implements WorkerAdapter {
       stdin: input.prompt,
       startupTimeoutMs: this.startupTimeoutMs
     });
+    const initialOutput = filterKnownPlatformNoise(processResult.output);
 
     return {
       command: built.displayCommand,
       cwd: input.cwd,
-      resumeId: extractResumeId(processResult.output),
-      pid: processResult.pid ?? extractRemotePid(processResult.output),
+      resumeId: extractResumeId(initialOutput),
+      pid: processResult.pid ?? extractRemotePid(initialOutput),
       status: processResult.status,
-      initialOutput: processResult.output,
-      completion: processResult.status === "running" ? processResult.completion : undefined
+      initialOutput,
+      completion:
+        processResult.status === "running"
+          ? processResult.completion?.then((completion) => ({
+              ...completion,
+              output: filterKnownPlatformNoise(completion.output)
+            }))
+          : undefined
     };
   }
 }
@@ -121,7 +129,7 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
 
         settled = true;
         clearTimeout(timer);
-        const settledOutput = `${output}${extraOutput}`;
+        const settledOutput = filterKnownPlatformNoise(`${output}${extraOutput}`);
         resolve({
           status,
           output: settledOutput,
@@ -138,7 +146,7 @@ export class ChildProcessSshWorkerRunner implements SshWorkerProcessRunner {
         completionSettled = true;
         complete({
           status,
-          output: `${output}${extraOutput}`
+          output: filterKnownPlatformNoise(`${output}${extraOutput}`)
         });
       };
 
