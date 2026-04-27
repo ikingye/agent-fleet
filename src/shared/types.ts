@@ -199,11 +199,26 @@ export interface DeliveryReport {
 export interface StewardMessage {
   id: string;
   role: StewardMessageRole;
+  conversationId?: string | null;
+  transport?: string | null;
+  externalMessageId?: string | null;
+  idempotencyKey?: string | null;
   projectName: string | null;
   workspacePath: string | null;
   goalId: string | null;
   body: string;
   createdAt: string;
+}
+
+export interface StewardConversation {
+  id: string;
+  projectName: string | null;
+  workspacePath: string | null;
+  goalId: string | null;
+  transport: string | null;
+  messageCount: number;
+  createdAt: string;
+  lastMessageAt: string;
 }
 
 export interface RecoveryWorkerSession {

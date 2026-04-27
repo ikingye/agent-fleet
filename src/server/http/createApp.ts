@@ -24,6 +24,7 @@ import { RemoteGithubDeployKeyProvisioner } from "../remote/remoteKeyProvisioner
 import { probeRemoteWorkerPid } from "../remote/remoteWorkerProbe.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
+import { ConversationService, type ConversationOwnerMessageInput } from "../steward/conversationService.js";
 import { createDashboardWorkerProcessProbe } from "../steward/remoteSupervisorRuntime.js";
 import { maintainGithubDeployKeyLeases } from "../steward/githubDeployKeyLeaseMaintenance.js";
 import { runStewardAutonomyTick } from "../steward/stewardAutonomyRuntime.js";
@@ -268,6 +269,104 @@ function githubDeployKeyLeaseErrorStatus(error: Error): 400 | 404 {
     : 400;
 }
 
+function optionalRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function requireOwnerMessageBody(body: Record<string, unknown>): string {
+  if (body.body !== undefined) {
+    return requireString(body.body, "body");
+  }
+
+  if (body.text !== undefined) {
+    return requireString(body.text, "text");
+  }
+
+  if (body.message !== undefined) {
+    return requireString(body.message, "message");
+  }
+
+  return requireString(undefined, "body");
+}
+
+function projectNameFromEnvelope(body: Record<string, unknown>): string | null {
+  const direct = optionalString(body.projectName, "projectName");
+  if (direct !== null) {
+    return direct;
+  }
+
+  if (typeof body.project === "string") {
+    return requireString(body.project, "project");
+  }
+
+  const project = optionalRecord(body.project);
+  if (project === null) {
+    return null;
+  }
+
+  return optionalString(project.name, "project.name") ?? optionalString(project.projectName, "project.projectName");
+}
+
+function workspacePathFromEnvelope(body: Record<string, unknown>): string | null {
+  const direct = optionalString(body.workspacePath, "workspacePath");
+  if (direct !== null) {
+    return direct;
+  }
+
+  const project = optionalRecord(body.project);
+  if (project === null) {
+    return null;
+  }
+
+  return optionalString(project.workspacePath, "project.workspacePath");
+}
+
+function externalMessageIdFromEnvelope(body: Record<string, unknown>): string | null {
+  const direct =
+    optionalString(body.externalMessageId, "externalMessageId") ?? optionalString(body.externalId, "externalId");
+  if (direct !== null) {
+    return direct;
+  }
+
+  const external = optionalRecord(body.external);
+  if (external === null) {
+    return null;
+  }
+
+  return optionalString(external.messageId, "external.messageId") ?? optionalString(external.id, "external.id");
+}
+
+function idempotencyKeyFromHeaders(headers: Record<string, string | string[] | undefined>): string | null {
+  const value = headers["idempotency-key"] ?? headers["x-idempotency-key"];
+
+  if (Array.isArray(value)) {
+    return value[0] === undefined ? null : optionalString(value[0], "idempotency-key");
+  }
+
+  return optionalString(value, "idempotency-key");
+}
+
+function conversationMessageInput(
+  conversationId: string,
+  body: Record<string, unknown>,
+  headers: Record<string, string | string[] | undefined>
+): ConversationOwnerMessageInput {
+  return {
+    conversationId,
+    transport: optionalString(body.transport, "transport") ?? "api",
+    externalMessageId: externalMessageIdFromEnvelope(body),
+    idempotencyKey: optionalString(body.idempotencyKey, "idempotencyKey") ?? idempotencyKeyFromHeaders(headers),
+    projectName: projectNameFromEnvelope(body),
+    workspacePath: workspacePathFromEnvelope(body),
+    goalId: optionalString(body.goalId, "goalId"),
+    body: requireOwnerMessageBody(body)
+  };
+}
+
+function serverSentEvent(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
 export async function createApp(options: CreateAppOptions = {}) {
   const app = fastify({ logger: true });
   const store = await JsonControlPlaneStore.open(options.statePath ?? defaultStatePath());
@@ -302,6 +401,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       options.worktreeRunner ?? (materializeWorktrees ? createNodeWorktreeRunner(defaultRepositoryPath) : undefined)
   });
   const stewardMessageLoop = new StewardMessageLoop({ store, steward });
+  const conversationService = new ConversationService({ store, messageLoop: stewardMessageLoop });
 
   await app.register(cors, {
     origin(origin, callback) {
@@ -316,6 +416,87 @@ export async function createApp(options: CreateAppOptions = {}) {
   app.get("/api/dashboard", async () => store.dashboard());
 
   app.get("/api/recovery", async () => buildStewardRecoveryReport(await store.dashboard()));
+
+  app.get("/api/conversations", async (request, reply) => {
+    const query = requestBody(request.query);
+
+    try {
+      const conversations = await conversationService.listConversations({
+        projectName: optionalString(query.projectName, "projectName") ?? undefined,
+        workspacePath: optionalString(query.workspacePath, "workspacePath") ?? undefined,
+        transport: optionalString(query.transport, "transport") ?? undefined
+      });
+
+      return { conversations };
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.post("/api/conversations/:conversationId/messages", async (request, reply) => {
+    const params = request.params as { conversationId?: string };
+    const body = requestBody(request.body);
+
+    try {
+      return await conversationService.acceptOwnerMessage(
+        conversationMessageInput(requireString(params.conversationId, "conversationId"), body, request.headers)
+      );
+    } catch (error) {
+      if (error instanceof Error) {
+        const statusCode = error.message.startsWith("Goal not found:") ? 404 : 400;
+
+        return reply.code(statusCode).send({
+          error: statusCode === 404 ? "Not Found" : "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.get("/api/conversations/:conversationId/messages", async (request, reply) => {
+    const params = request.params as { conversationId?: string };
+
+    try {
+      const messages = await conversationService.listMessages(requireString(params.conversationId, "conversationId"));
+
+      return { messages };
+    } catch (error) {
+      if (error instanceof Error) {
+        return reply.code(400).send({
+          error: "Bad Request",
+          message: error.message
+        });
+      }
+
+      throw error;
+    }
+  });
+
+  app.get("/api/events", async (_request, reply) => {
+    const dashboard = await store.dashboard();
+    const now = new Date().toISOString();
+    const body =
+      serverSentEvent("initial", {
+        createdAt: now,
+        events: dashboard.events.slice(-50)
+      }) + serverSentEvent("heartbeat", { createdAt: now });
+
+    return reply
+      .header("content-type", "text/event-stream; charset=utf-8")
+      .header("cache-control", "no-cache")
+      .header("connection", "keep-alive")
+      .header("x-accel-buffering", "no")
+      .send(body);
+  });
 
   app.post("/api/recovery/reconcile", async () => {
     const dashboard = await store.dashboard();
@@ -533,7 +714,11 @@ export async function createApp(options: CreateAppOptions = {}) {
     const body = requestBody(request.body);
 
     try {
-      return await stewardMessageLoop.acceptOwnerMessage({
+      return await conversationService.acceptOwnerMessage({
+        conversationId: optionalString(body.conversationId, "conversationId") ?? "steward",
+        transport: optionalString(body.transport, "transport") ?? "web",
+        externalMessageId: externalMessageIdFromEnvelope(body),
+        idempotencyKey: optionalString(body.idempotencyKey, "idempotencyKey") ?? idempotencyKeyFromHeaders(request.headers),
         projectName: optionalString(body.projectName, "projectName"),
         workspacePath: optionalString(body.workspacePath, "workspacePath"),
         goalId: optionalString(body.goalId, "goalId"),
@@ -558,8 +743,10 @@ export async function createApp(options: CreateAppOptions = {}) {
 
     try {
       const messages = await store.listStewardMessages({
+        conversationId: optionalString(query.conversationId, "conversationId") ?? undefined,
         projectName: optionalString(query.projectName, "projectName") ?? undefined,
-        workspacePath: optionalString(query.workspacePath, "workspacePath") ?? undefined
+        workspacePath: optionalString(query.workspacePath, "workspacePath") ?? undefined,
+        transport: optionalString(query.transport, "transport") ?? undefined
       });
 
       return { messages };

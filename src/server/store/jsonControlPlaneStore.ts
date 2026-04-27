@@ -206,6 +206,10 @@ export interface RecordDeliveryReportInput {
 
 export interface RecordStewardMessageInput {
   role: StewardMessageRole;
+  conversationId?: string | null;
+  transport?: string | null;
+  externalMessageId?: string | null;
+  idempotencyKey?: string | null;
   projectName: string | null;
   workspacePath: string | null;
   goalId: string | null;
@@ -213,8 +217,11 @@ export interface RecordStewardMessageInput {
 }
 
 export interface ListStewardMessagesFilter {
+  conversationId?: string;
   projectName?: string;
   workspacePath?: string;
+  goalId?: string;
+  transport?: string;
 }
 
 function now(): string {
@@ -256,7 +263,7 @@ function parseState(raw: string): ControlPlaneState {
     githubDeployKeyLeases: (parsed.githubDeployKeyLeases ?? []).map(normalizeGithubDeployKeyLease),
     worktreeAssignments: parsed.worktreeAssignments ?? [],
     stewardCheckpoints: parsed.stewardCheckpoints ?? [],
-    stewardMessages: parsed.stewardMessages ?? [],
+    stewardMessages: (parsed.stewardMessages ?? []).map(normalizeStewardMessage),
     workerReports: parsed.workerReports ?? [],
     agentArtifacts: parsed.agentArtifacts ?? [],
     reviews: parsed.reviews ?? [],
@@ -272,6 +279,16 @@ function normalizeGoal(goal: Goal | (Omit<Goal, "workspacePath"> & { workspacePa
       typeof goal.workspacePath === "string" && goal.workspacePath.trim() !== ""
         ? goal.workspacePath
         : legacyWorkspacePath(goal.projectName)
+  };
+}
+
+function normalizeStewardMessage(message: StewardMessage): StewardMessage {
+  return {
+    ...message,
+    conversationId: message.conversationId ?? null,
+    transport: message.transport ?? null,
+    externalMessageId: message.externalMessageId ?? null,
+    idempotencyKey: message.idempotencyKey ?? null
   };
 }
 
@@ -920,6 +937,10 @@ export class JsonControlPlaneStore {
     const message: StewardMessage = {
       id: randomUUID(),
       role: input.role,
+      conversationId: input.conversationId ?? null,
+      transport: input.transport ?? null,
+      externalMessageId: input.externalMessageId ?? null,
+      idempotencyKey: input.idempotencyKey ?? null,
       projectName: input.projectName,
       workspacePath: input.workspacePath,
       goalId: input.goalId,
@@ -937,6 +958,10 @@ export class JsonControlPlaneStore {
       metadata: {
         stewardMessageId: message.id,
         role: message.role,
+        conversationId: message.conversationId,
+        transport: message.transport,
+        externalMessageId: message.externalMessageId,
+        idempotencyKey: message.idempotencyKey,
         projectName: message.projectName,
         workspacePath: message.workspacePath
       }
@@ -948,11 +973,23 @@ export class JsonControlPlaneStore {
 
   async listStewardMessages(filter: ListStewardMessagesFilter = {}): Promise<StewardMessage[]> {
     return this.state.stewardMessages.filter((message) => {
+      if (filter.conversationId !== undefined && message.conversationId !== filter.conversationId) {
+        return false;
+      }
+
       if (filter.projectName !== undefined && message.projectName !== filter.projectName) {
         return false;
       }
 
       if (filter.workspacePath !== undefined && message.workspacePath !== filter.workspacePath) {
+        return false;
+      }
+
+      if (filter.goalId !== undefined && message.goalId !== filter.goalId) {
+        return false;
+      }
+
+      if (filter.transport !== undefined && message.transport !== filter.transport) {
         return false;
       }
 
