@@ -146,6 +146,48 @@ describe("webhook connector", () => {
     });
   });
 
+  it("uses the request signature as an idempotency default when the payload has no message id", async () => {
+    const conversationService = conversationServiceStub("Recorded once.");
+    const handler = createWebhookConnectorHandler({
+      configs: [baseConfig],
+      conversationService
+    });
+    const rawBody = JSON.stringify({
+      senderId: "wechat-user-1",
+      text: "Record this replay-safe message."
+    });
+    const timestamp = "1777256640";
+    const nonce = "nonce-default-idempotency";
+    const signature = signWebhookConnectorRequest({
+      secret: "signing-secret",
+      timestamp,
+      nonce,
+      rawBody
+    });
+
+    await handler.receiveMessage({
+      connectorId: "wechat-dev",
+      rawBody,
+      headers: {},
+      query: {
+        timestamp,
+        nonce,
+        signature
+      }
+    });
+
+    expect(conversationService.acceptOwnerMessage).toHaveBeenCalledWith({
+      conversationId: "webhook:wechat-dev:wechat-user-1",
+      transport: "im",
+      externalMessageId: null,
+      idempotencyKey: `signature:${signature}`,
+      projectName: "mahjong",
+      workspacePath: "/Users/yewang/code/project/mahjong",
+      goalId: null,
+      body: "Record this replay-safe message."
+    });
+  });
+
   it("rejects signed inbound messages from senders outside the connector allowlist", async () => {
     const handler = createWebhookConnectorHandler({
       configs: [baseConfig],
