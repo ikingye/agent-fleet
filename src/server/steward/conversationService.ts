@@ -1,4 +1,4 @@
-import type { StewardConversation, StewardMessage } from "../../shared/types.js";
+import type { ConversationTransport, StewardConversation, StewardMessage } from "../../shared/types.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import type { StewardMessageLoop, StewardOwnerMessageResult } from "./stewardMessageLoop.js";
 
@@ -32,9 +32,33 @@ export class ConversationService {
   constructor(private readonly options: ConversationServiceOptions) {}
 
   async acceptOwnerMessage(input: ConversationOwnerMessageInput): Promise<ConversationOwnerMessageResult> {
-    const duplicate = await this.findDuplicate(input);
+    const transport = requireConversationTransport(input.transport);
+    const conversation = await this.options.store.upsertConversation({
+      id: input.conversationId,
+      transport,
+      projectName: input.projectName,
+      workspacePath: input.workspacePath,
+      externalConversationId: input.conversationId,
+      title: input.projectName
+    });
+    const normalizedInput = {
+      ...input,
+      conversationId: conversation.id,
+      transport
+    };
+    const duplicate = await this.findDuplicate(normalizedInput);
 
     if (duplicate !== null) {
+      await this.options.store.recordMessageDelivery({
+        conversationId: conversation.id,
+        stewardMessageId: null,
+        transport,
+        direction: "inbound",
+        externalMessageId: input.externalMessageId,
+        idempotencyKey: input.idempotencyKey,
+        deliveryStatus: "duplicate"
+      });
+
       return {
         duplicate: true,
         ownerMessage: duplicate.ownerMessage,
@@ -43,14 +67,24 @@ export class ConversationService {
     }
 
     const result = await this.options.messageLoop.acceptOwnerMessage({
-      conversationId: input.conversationId,
-      transport: input.transport,
+      conversationId: normalizedInput.conversationId,
+      transport: normalizedInput.transport,
       externalMessageId: input.externalMessageId,
       idempotencyKey: input.idempotencyKey,
       projectName: input.projectName,
       workspacePath: input.workspacePath,
       goalId: input.goalId,
       body: input.body
+    });
+
+    await this.options.store.recordMessageDelivery({
+      conversationId: conversation.id,
+      stewardMessageId: result.ownerMessage.id,
+      transport,
+      direction: "inbound",
+      externalMessageId: input.externalMessageId,
+      idempotencyKey: input.idempotencyKey,
+      deliveryStatus: "delivered"
     });
 
     return {
@@ -72,10 +106,12 @@ export class ConversationService {
   }
 
   async listConversations(filter: ListConversationsFilter = {}): Promise<StewardConversation[]> {
+    const transport =
+      filter.transport === undefined ? undefined : requireConversationTransport(filter.transport);
     const messages = await this.options.store.listStewardMessages({
       projectName: filter.projectName,
       workspacePath: filter.workspacePath,
-      transport: filter.transport
+      transport
     });
     const conversations = new Map<string, StewardConversation>();
 
@@ -115,7 +151,9 @@ export class ConversationService {
     );
   }
 
-  private async findDuplicate(input: ConversationOwnerMessageInput): Promise<StewardOwnerMessageResult | null> {
+  private async findDuplicate(
+    input: ConversationOwnerMessageInput & { transport: ConversationTransport }
+  ): Promise<StewardOwnerMessageResult | null> {
     if (input.idempotencyKey === null && input.externalMessageId === null) {
       return null;
     }
@@ -149,6 +187,14 @@ export class ConversationService {
       stewardMessage
     };
   }
+}
+
+function requireConversationTransport(value: string): ConversationTransport {
+  if (value === "web" || value === "cli" || value === "im" || value === "api") {
+    return value;
+  }
+
+  throw new Error("transport must be one of: web, cli, im, api");
 }
 
 function legacyConversationId(message: StewardMessage): string {
