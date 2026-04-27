@@ -55,6 +55,17 @@ npm run dev
 
 The API listens on `127.0.0.1:8787` by default and the Vite web app listens on `127.0.0.1:5173`.
 
+After installing or linking the package, the `steward` command can talk to the same API:
+
+```sh
+steward status
+steward chat --workspace ~/code/project/mahjong --project mahjong
+steward chat --workspace ~/code/project/mahjong --once "What needs my review?"
+```
+
+`steward` with no arguments opens an interactive chat using the current directory as the workspace. Use
+`STEWARD_API_URL` or `--api-url` when the API is not running on `http://127.0.0.1:8787`.
+
 Open `http://127.0.0.1:5173`, use Steward Chat as the owner's primary surface, and submit work through Steward Intake with an explicit Target directory. For normal product work the target `workspacePath` should be the business project, such as `~/code/project/mahjong`, not this agent-fleet repository. The Steward records that path with the goal and Worker cwd/project work belongs there unless the owner explicitly asks to change agent-fleet itself.
 
 Local recovery:

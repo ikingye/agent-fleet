@@ -11,6 +11,8 @@ agent-fleet reads configuration from environment variables.
 | `AGENT_FLEET_WORKER_ARGS` | empty | Worker command arguments, parsed with basic shell-style quoting. |
 | `AGENT_FLEET_WORKER_CWD` | current working directory | Fallback local Worker cwd for launch paths that do not receive a goal workspace. This is not the normal project selector. |
 | `AGENT_FLEET_MATERIALIZE_WORKTREES` | `false` | Set to `true` to create git worktrees before starting Worker sessions. |
+| `STEWARD_API_URL` | `http://127.0.0.1:8787` | API URL used by the installed `steward` CLI. |
+| `STEWARD_API_TOKEN` / `AGENT_FLEET_API_TOKEN` | empty | Optional bearer token sent by the `steward` CLI when a deployment requires API authentication. |
 
 ## Workspace Path
 
