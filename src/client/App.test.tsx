@@ -157,6 +157,14 @@ function jsonResponse(value: unknown) {
   };
 }
 
+function notFoundResponse() {
+  return {
+    ok: false,
+    status: 404,
+    json: () => Promise.resolve({ error: "Not Found" })
+  };
+}
+
 describe("App", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(dashboard)));
@@ -279,13 +287,31 @@ describe("App", () => {
         }
       ]
     };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(dashboard))
-      .mockResolvedValueOnce(jsonResponse({ result: { checked: 1, updated: 1 } }))
-      .mockResolvedValueOnce(jsonResponse(autonomyDashboard))
-      .mockResolvedValueOnce(jsonResponse({ checked: 1, updated: 0 }))
-      .mockResolvedValueOnce(jsonResponse(reconciledDashboard));
+    let currentDashboard: unknown = dashboard;
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url === "/api/dashboard") {
+        return Promise.resolve(jsonResponse(currentDashboard));
+      }
+
+      if (url === "/api/conversations") {
+        return Promise.resolve(notFoundResponse());
+      }
+
+      if (url === "/api/steward/autonomy/run" && method === "POST") {
+        currentDashboard = autonomyDashboard;
+        return Promise.resolve(jsonResponse({ result: { checked: 1, updated: 1 } }));
+      }
+
+      if (url === "/api/recovery/reconcile" && method === "POST") {
+        currentDashboard = reconciledDashboard;
+        return Promise.resolve(jsonResponse({ checked: 1, updated: 0 }));
+      }
+
+      return Promise.resolve(notFoundResponse());
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -301,7 +327,7 @@ describe("App", () => {
 
     expect(fetchMock).toHaveBeenCalledWith("/api/recovery/reconcile", expect.objectContaining({ method: "POST" }));
     expect(await screen.findByText("Recovery reconcile checked 1 Worker session and updated 0.")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenLastCalledWith("/api/dashboard");
+    expect(fetchMock).toHaveBeenCalledWith("/api/dashboard");
   });
 
   it("shows supervision metrics for decisions, Worker sessions, and memory", async () => {
@@ -353,11 +379,26 @@ describe("App", () => {
         }
       ]
     };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(dashboard))
-      .mockResolvedValueOnce(jsonResponse(refreshedDashboard.executionNodes[1]))
-      .mockResolvedValueOnce(jsonResponse(refreshedDashboard));
+    let currentDashboard: unknown = dashboard;
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url === "/api/dashboard") {
+        return Promise.resolve(jsonResponse(currentDashboard));
+      }
+
+      if (url === "/api/conversations") {
+        return Promise.resolve(notFoundResponse());
+      }
+
+      if (url === "/api/execution-nodes" && method === "POST") {
+        currentDashboard = refreshedDashboard;
+        return Promise.resolve(jsonResponse(refreshedDashboard.executionNodes[1]));
+      }
+
+      return Promise.resolve(notFoundResponse());
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -391,7 +432,7 @@ describe("App", () => {
         })
       })
     );
-    expect(fetchMock).toHaveBeenLastCalledWith("/api/dashboard");
+    expect(fetchMock).toHaveBeenCalledWith("/api/dashboard");
     expect(await screen.findByText("mac-mini-builder")).toBeInTheDocument();
   });
 
@@ -664,24 +705,39 @@ describe("App", () => {
         }
       ]
     };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse(dashboard))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ownerMessage: refreshedDashboard.stewardMessages[2],
-          stewardMessage: {
-            id: "message-4",
-            role: "steward",
-            projectName: "mahjong",
-            workspacePath: "/Users/yewang/code/project/mahjong",
-            goalId: null,
-            body: "Acknowledged.",
-            createdAt: "2026-04-26T00:03:10.000Z"
-          }
-        })
-      )
-      .mockResolvedValueOnce(jsonResponse(refreshedDashboard));
+    let currentDashboard: unknown = dashboard;
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url === "/api/dashboard") {
+        return Promise.resolve(jsonResponse(currentDashboard));
+      }
+
+      if (url === "/api/conversations") {
+        return Promise.resolve(notFoundResponse());
+      }
+
+      if (url === "/api/steward/messages" && method === "POST") {
+        currentDashboard = refreshedDashboard;
+        return Promise.resolve(
+          jsonResponse({
+            ownerMessage: refreshedDashboard.stewardMessages[2],
+            stewardMessage: {
+              id: "message-4",
+              role: "steward",
+              projectName: "mahjong",
+              workspacePath: "/Users/yewang/code/project/mahjong",
+              goalId: null,
+              body: "Acknowledged.",
+              createdAt: "2026-04-26T00:03:10.000Z"
+            }
+          })
+        );
+      }
+
+      return Promise.resolve(notFoundResponse());
+    });
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
@@ -708,8 +764,166 @@ describe("App", () => {
         })
       })
     );
-    expect(fetchMock).toHaveBeenLastCalledWith("/api/dashboard");
+    expect(fetchMock).toHaveBeenCalledWith("/api/dashboard");
     expect(await screen.findByText("Use the external Mahjong workspace.")).toBeInTheDocument();
+  });
+
+  it("loads Steward conversation history and sends web chat through the selected conversation", async () => {
+    const conversation = {
+      id: "conversation-1",
+      title: "Mahjong recovery",
+      projectName: "mahjong",
+      workspacePath: "/Users/yewang/code/project/mahjong",
+      goalId: "goal-1",
+      createdAt: "2026-04-26T00:00:00.000Z",
+      updatedAt: "2026-04-26T00:04:00.000Z"
+    };
+    const conversationMessages = [
+      {
+        id: "conversation-message-1",
+        role: "owner",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        goalId: "goal-1",
+        body: "Show me recovery for /Users/yewang/code/project/mahjong.",
+        createdAt: "2026-04-26T00:02:00.000Z"
+      },
+      {
+        id: "conversation-message-2",
+        role: "steward",
+        projectName: "mahjong",
+        workspacePath: "/Users/yewang/code/project/mahjong",
+        goalId: "goal-1",
+        body: "Recovery is current for /Users/yewang/code/project/mahjong.",
+        createdAt: "2026-04-26T00:02:10.000Z"
+      }
+    ];
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url === "/api/dashboard") {
+        return Promise.resolve(jsonResponse(dashboard));
+      }
+
+      if (url === "/api/conversations" && method === "GET") {
+        return Promise.resolve(jsonResponse({ conversations: [conversation] }));
+      }
+
+      if (url === "/api/conversations/conversation-1/messages" && method === "GET") {
+        return Promise.resolve(jsonResponse({ messages: conversationMessages }));
+      }
+
+      if (url === "/api/conversations/conversation-1/messages" && method === "POST") {
+        return Promise.resolve(
+          jsonResponse({
+            ownerMessage: {
+              ...conversationMessages[0],
+              id: "conversation-message-3",
+              body: "Use the external Mahjong workspace."
+            },
+            stewardMessage: {
+              ...conversationMessages[1],
+              id: "conversation-message-4",
+              body: "Acknowledged."
+            }
+          })
+        );
+      }
+
+      return Promise.resolve(notFoundResponse());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    expect(await screen.findByLabelText("Conversation")).toHaveDisplayValue("Mahjong recovery - ~/code/project/mahjong");
+    expect(screen.getByText("Show me recovery for ~/code/project/mahjong.")).toBeInTheDocument();
+    expect(screen.queryByText(/\/Users\/yewang\/code\/project\/mahjong/)).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("Project"), "mahjong");
+    await user.type(screen.getByLabelText("Target directory"), "/Users/yewang/code/project/mahjong");
+    await user.type(screen.getByLabelText("Message Steward"), "Use the external Mahjong workspace.");
+    await user.click(screen.getByRole("button", { name: "Send to Steward" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/conversations/conversation-1/messages",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          body: "Use the external Mahjong workspace.",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong"
+        })
+      })
+    );
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/steward/messages", expect.anything());
+  });
+
+  it("falls back to the legacy Steward message endpoint when conversations are unavailable", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url === "/api/dashboard") {
+        return Promise.resolve(jsonResponse(dashboard));
+      }
+
+      if (url === "/api/conversations") {
+        return Promise.resolve(notFoundResponse());
+      }
+
+      if (url === "/api/steward/messages" && method === "POST") {
+        return Promise.resolve(
+          jsonResponse({
+            ownerMessage: dashboard.stewardMessages[0],
+            stewardMessage: dashboard.stewardMessages[1]
+          })
+        );
+      }
+
+      return Promise.resolve(notFoundResponse());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Project"), "mahjong");
+    await user.type(screen.getByLabelText("Target directory"), "/Users/yewang/code/project/mahjong");
+    await user.type(screen.getByLabelText("Message Steward"), "Check status.");
+    await user.click(screen.getByRole("button", { name: "Send to Steward" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/conversations", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/steward/messages",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          body: "Check status.",
+          projectName: "mahjong",
+          workspacePath: "/Users/yewang/code/project/mahjong"
+        })
+      })
+    );
+  });
+
+  it("requires a target directory before sending a Steward chat message", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ...dashboard, goals: [], stewardMessages: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await user.type(await screen.findByLabelText("Message Steward"), "Start implementation without a workspace.");
+    await user.click(screen.getByRole("button", { name: "Send to Steward" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Target directory is required");
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringMatching(/\/api\/(steward\/messages|conversations\/.+\/messages)/),
+      expect.objectContaining({ method: "POST" })
+    );
   });
 
   it("sends a correction for a Steward decision", async () => {

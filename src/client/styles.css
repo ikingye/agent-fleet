@@ -235,6 +235,35 @@ h3 {
   padding: 11px 13px 9px;
 }
 
+.conversation-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 280px);
+  gap: 10px;
+  align-items: center;
+}
+
+.conversation-select {
+  display: grid;
+  gap: 4px;
+  color: #61716c;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.conversation-select select {
+  min-width: 0;
+  width: 100%;
+  border: 1px solid #cad5d0;
+  border-radius: 6px;
+  padding: 7px 9px;
+  background: #ffffff;
+  color: #182126;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: none;
+}
+
 .compact-heading {
   padding-block: 9px;
 }
@@ -1057,6 +1086,10 @@ h3 {
   }
 
   .report-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-heading {
     grid-template-columns: 1fr;
   }
 }

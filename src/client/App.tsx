@@ -2,14 +2,17 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import type { ExecutionNode, StewardDecision, WorkerReport, WorkerSession } from "../shared/types.js";
 import {
   type ClientDashboardData,
+  type ClientConversation,
   type ClientExecutionNode,
   correctDecision,
   createGoal,
+  fetchConversationMessages,
+  fetchConversations,
   fetchDashboard,
   reconcileRecovery,
   registerExecutionNode,
   runAutonomyTick,
-  sendStewardMessage
+  sendStewardConversationMessage
 } from "./api.js";
 
 const emptyDashboard: ClientDashboardData = {
@@ -42,6 +45,16 @@ function displayPath(path: string): string {
   }
 
   return path;
+}
+
+function displayText(value: string): string {
+  return value.split(ownerHomePath).join("~");
+}
+
+function conversationLabel(conversation: ClientConversation): string {
+  const title = conversation.title?.trim() || conversation.projectName?.trim() || "Steward conversation";
+
+  return conversation.workspacePath ? `${title} - ${displayPath(conversation.workspacePath)}` : title;
 }
 
 function actions(decision: StewardDecision): string[] {
@@ -83,7 +96,7 @@ function isKeyDecision(decision: StewardDecision): boolean {
 }
 
 function primaryReportDetail(values: string[]): string {
-  return values[0] ?? "No detail recorded.";
+  return displayText(values[0] ?? "No detail recorded.");
 }
 
 function reportFileSummary(report: WorkerReport): string {
@@ -91,7 +104,7 @@ function reportFileSummary(report: WorkerReport): string {
     return "No files listed.";
   }
 
-  return report.changedFiles.slice(0, 3).join(", ");
+  return displayText(report.changedFiles.slice(0, 3).join(", "));
 }
 
 type DashboardTab = "overview" | "goals" | "workers" | "recovery" | "resources";
@@ -112,6 +125,9 @@ export function App() {
   const [goalTitle, setGoalTitle] = useState("");
   const [goalBody, setGoalBody] = useState("");
   const [stewardMessageBody, setStewardMessageBody] = useState("");
+  const [conversations, setConversations] = useState<ClientConversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [conversationApiAvailable, setConversationApiAvailable] = useState<boolean | null>(null);
   const [nodeName, setNodeName] = useState("");
   const [nodeSshHost, setNodeSshHost] = useState("");
   const [nodeWorkRoot, setNodeWorkRoot] = useState("");
@@ -182,9 +198,44 @@ export function App() {
   const goalCount = dashboard.goals.length;
   const workerCount = dashboard.workerSessions.length;
 
-  async function refresh() {
+  async function applyDashboardData(nextDashboard: ClientDashboardData, preferredConversationId = selectedConversationId) {
+    const nextConversations = await fetchConversations();
+
+    if (nextConversations === null) {
+      setConversationApiAvailable(false);
+      setConversations([]);
+      setSelectedConversationId("");
+      setDashboard(nextDashboard);
+      return;
+    }
+
+    setConversationApiAvailable(true);
+    setConversations(nextConversations);
+
+    const nextSelectedConversationId = nextConversations.some(
+      (conversation) => conversation.id === preferredConversationId
+    )
+      ? preferredConversationId
+      : nextConversations[0]?.id ?? "";
+
+    setSelectedConversationId(nextSelectedConversationId);
+
+    if (nextSelectedConversationId === "") {
+      setDashboard(nextDashboard);
+      return;
+    }
+
+    const conversationMessages = await fetchConversationMessages(nextSelectedConversationId);
+
+    setDashboard({
+      ...nextDashboard,
+      stewardMessages: conversationMessages ?? nextDashboard.stewardMessages
+    });
+  }
+
+  async function refresh(preferredConversationId = selectedConversationId) {
     const nextDashboard = await fetchDashboard();
-    setDashboard(nextDashboard);
+    await applyDashboardData(nextDashboard, preferredConversationId);
     setError(null);
   }
 
@@ -192,9 +243,9 @@ export function App() {
     let mounted = true;
 
     fetchDashboard()
-      .then((nextDashboard) => {
+      .then(async (nextDashboard) => {
         if (mounted) {
-          setDashboard(nextDashboard);
+          await applyDashboardData(nextDashboard, selectedConversationId);
         }
       })
       .catch((fetchError: unknown) => {
@@ -207,6 +258,31 @@ export function App() {
       mounted = false;
     };
   }, []);
+
+  async function changeConversation(conversationId: string) {
+    setSelectedConversationId(conversationId);
+
+    if (conversationId === "") {
+      return;
+    }
+
+    try {
+      const conversationMessages = await fetchConversationMessages(conversationId);
+
+      if (conversationMessages === null) {
+        setConversationApiAvailable(false);
+        return;
+      }
+
+      setDashboard((currentDashboard) => ({
+        ...currentDashboard,
+        stewardMessages: conversationMessages
+      }));
+      setError(null);
+    } catch (conversationError) {
+      setError(conversationError instanceof Error ? conversationError.message : "Failed to load conversation.");
+    }
+  }
 
   async function submitGoal(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -232,20 +308,29 @@ export function App() {
     event.preventDefault();
 
     const body = stewardMessageBody.trim();
+    const targetWorkspacePath = workspacePath.trim();
 
     if (body === "") {
       setError("Steward message cannot be empty.");
       return;
     }
 
+    if (targetWorkspacePath === "") {
+      setError("Target directory is required before messaging the Steward.");
+      return;
+    }
+
     try {
-      await sendStewardMessage({
-        body,
-        ...(projectName.trim() === "" ? {} : { projectName: projectName.trim() }),
-        ...(workspacePath.trim() === "" ? {} : { workspacePath: workspacePath.trim() })
-      });
+      await sendStewardConversationMessage(
+        {
+          body,
+          ...(projectName.trim() === "" ? {} : { projectName: projectName.trim() }),
+          workspacePath: targetWorkspacePath
+        },
+        selectedConversationId
+      );
       setStewardMessageBody("");
-      await refresh();
+      await refresh(selectedConversationId);
     } catch (messageError) {
       setError(messageError instanceof Error ? messageError.message : "Failed to send Steward message.");
     }
@@ -423,9 +508,27 @@ export function App() {
         </section>
 
         <section className="panel chat-panel" hidden={selectedTab !== "overview"}>
-          <div className="panel-heading">
-            <p className="eyebrow">Durable Conversation</p>
-            <h2>Steward Chat</h2>
+          <div className="panel-heading conversation-heading">
+            <div>
+              <p className="eyebrow">Durable Conversation</p>
+              <h2>Steward Chat</h2>
+            </div>
+            {conversationApiAvailable === true && conversations.length > 0 ? (
+              <label className="conversation-select">
+                <span>Conversation</span>
+                <select
+                  aria-label="Conversation"
+                  onChange={(event) => void changeConversation(event.target.value)}
+                  value={selectedConversationId}
+                >
+                  {conversations.map((conversation) => (
+                    <option key={conversation.id} value={conversation.id}>
+                      {conversationLabel(conversation)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
           </div>
           <div className="chat-log" aria-label="Steward messages">
             {ownerFacingMessages.length === 0 ? (
@@ -439,7 +542,7 @@ export function App() {
                     {message.workspacePath ? <code>{displayPath(message.workspacePath)}</code> : null}
                     <time dateTime={message.createdAt}>{formatEventTime(message.createdAt)}</time>
                   </div>
-                  <p>{message.body}</p>
+                  <p>{displayText(message.body)}</p>
                 </article>
               ))
             )}
@@ -462,7 +565,7 @@ export function App() {
                           {message.workspacePath ? <code>{displayPath(message.workspacePath)}</code> : null}
                           <time dateTime={message.createdAt}>{formatEventTime(message.createdAt)}</time>
                         </div>
-                        <p>{message.body}</p>
+                        <p>{displayText(message.body)}</p>
                       </article>
                     ))}
                   </div>
@@ -502,7 +605,7 @@ export function App() {
                         </div>
                       </dl>
                     ) : null}
-                    <p>{goal.body}</p>
+                    <p>{displayText(goal.body)}</p>
                   </div>
                   <span className={`pill status-${goal.status}`}>{goal.status}</span>
                 </article>
@@ -534,7 +637,7 @@ export function App() {
                     <div className="decision-head">
                       <div>
                         <h3>{decision.title}</h3>
-                        <p>{decision.rationale}</p>
+                        <p>{displayText(decision.rationale)}</p>
                       </div>
                       <div className="badge-cluster">
                         <span className={`pill risk-${decision.risk}`}>{decision.risk}</span>
@@ -594,7 +697,7 @@ export function App() {
                       </section>
                     )}
                     {actions(decision).length > 0 ? (
-                      <p className="action-summary">{actions(decision).join(" | ")}</p>
+                      <p className="action-summary">{displayText(actions(decision).join(" | "))}</p>
                     ) : null}
                     <div className="correction-box">
                       <textarea
@@ -765,7 +868,7 @@ export function App() {
                                   </div>
                                 ) : null}
                               </dl>
-                              {session.lastOutput ? <pre>{session.lastOutput}</pre> : null}
+                              {session.lastOutput ? <pre>{displayText(session.lastOutput)}</pre> : null}
                             </div>
                             <div className="worker-history-meta">
                               <span className={`pill status-${session.status}`}>{session.status}</span>
@@ -816,7 +919,7 @@ export function App() {
                                   </div>
                                 ) : null}
                               </dl>
-                              {session.lastOutput ? <pre>{session.lastOutput}</pre> : null}
+                              {session.lastOutput ? <pre>{displayText(session.lastOutput)}</pre> : null}
                             </div>
                             <div className="worker-history-meta">
                               <span className={`pill status-${session.status}`}>{session.status}</span>
@@ -900,11 +1003,11 @@ export function App() {
                         <h3>{checkpoint.reason}</h3>
                         <time dateTime={checkpoint.createdAt}>{formatEventTime(checkpoint.createdAt)}</time>
                       </div>
-                      <p>{checkpoint.summary}</p>
+                      <p>{displayText(checkpoint.summary)}</p>
                       <dl className="resource-facts compact-facts">
                         <div>
                           <dt>next</dt>
-                          <dd>{checkpoint.nextAction}</dd>
+                          <dd>{displayText(checkpoint.nextAction)}</dd>
                         </div>
                         <div>
                           <dt>goals</dt>
@@ -935,7 +1038,7 @@ export function App() {
                         <h3>{event.type}</h3>
                         <time dateTime={event.createdAt}>{formatEventTime(event.createdAt)}</time>
                       </div>
-                      <p>{event.message}</p>
+                      <p>{displayText(event.message)}</p>
                       <dl className="event-links">
                         {event.goalId ? (
                           <div>
@@ -1088,7 +1191,7 @@ export function App() {
                 <article className="item-row compact-row" key={memory.id}>
                   <div>
                     <h3>{memory.key}</h3>
-                    <p>{memory.value}</p>
+                    <p>{displayText(memory.value)}</p>
                   </div>
                   <span className="pill">{memory.scope}</span>
                 </article>
