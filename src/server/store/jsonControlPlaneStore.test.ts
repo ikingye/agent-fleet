@@ -649,4 +649,237 @@ describe("JsonControlPlaneStore", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("migrates legacy state without conversation collections", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      await writeFile(
+        statePath,
+        JSON.stringify(
+          {
+            version: 1,
+            stewardMessages: [
+              {
+                id: "legacy-message",
+                role: "owner",
+                projectName: "agent-fleet",
+                workspacePath: "/projects/agent-fleet",
+                goalId: null,
+                body: "Legacy Steward chat message.",
+                createdAt: "2026-04-26T00:00:00.000Z"
+              }
+            ]
+          },
+          null,
+          2
+        )
+      );
+
+      const store = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await store.dashboard();
+
+      expect(dashboard.conversations).toEqual([]);
+      expect(dashboard.conversationBindings).toEqual([]);
+      expect(dashboard.messageDeliveries).toEqual([]);
+      expect(dashboard.stewardMessages?.[0]).toMatchObject({
+        id: "legacy-message",
+        conversationId: null,
+        transport: null,
+        externalMessageId: null,
+        idempotencyKey: null,
+        senderDisplay: null,
+        deliveryStatus: null
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("creates, lists, and persists conversations", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const conversation = await store.upsertConversation({
+        transport: "cli",
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        externalConversationId: "cli-session-1",
+        title: "CLI intake"
+      });
+
+      expect(await store.listConversations({ workspacePath: "/projects/agent-fleet" })).toEqual([
+        expect.objectContaining({
+          id: conversation.id,
+          transport: "cli",
+          projectName: "agent-fleet",
+          workspacePath: "/projects/agent-fleet",
+          externalConversationId: "cli-session-1",
+          title: "CLI intake"
+        })
+      ]);
+
+      const reopened = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await reopened.dashboard();
+
+      expect(dashboard.conversations).toEqual([
+        expect.objectContaining({
+          id: conversation.id,
+          transport: "cli",
+          workspacePath: "/projects/agent-fleet",
+          externalConversationId: "cli-session-1"
+        })
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("associates Steward messages with conversation and workspace filters", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const conversation = await store.upsertConversation({
+        transport: "web",
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        externalConversationId: "browser-thread-1",
+        title: "Dashboard chat"
+      });
+      const message = await store.recordStewardMessage({
+        role: "owner",
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        goalId: null,
+        body: "Please show current Worker status.",
+        conversationId: conversation.id,
+        transport: "web",
+        externalMessageId: "web-message-1",
+        idempotencyKey: "web-idempotency-1",
+        senderDisplay: "Owner",
+        deliveryStatus: "delivered"
+      });
+
+      expect(
+        await store.listStewardMessages({
+          conversationId: conversation.id,
+          workspacePath: "/projects/agent-fleet"
+        })
+      ).toEqual([
+        expect.objectContaining({
+          id: message.id,
+          conversationId: conversation.id,
+          transport: "web",
+          externalMessageId: "web-message-1",
+          idempotencyKey: "web-idempotency-1",
+          senderDisplay: "Owner",
+          deliveryStatus: "delivered"
+        })
+      ]);
+
+      const reopened = await JsonControlPlaneStore.open(statePath);
+      const dashboard = await reopened.dashboard();
+
+      expect(dashboard.stewardMessages?.[0]).toMatchObject({
+        id: message.id,
+        conversationId: conversation.id,
+        workspacePath: "/projects/agent-fleet"
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("detects duplicate inbound message deliveries deterministically", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "agent-fleet-store-"));
+    const statePath = join(dir, "state.json");
+
+    try {
+      const store = await JsonControlPlaneStore.open(statePath);
+      const conversation = await store.upsertConversation({
+        transport: "im",
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        externalConversationId: "slack-thread-1",
+        title: "Slack intake"
+      });
+      const message = await store.recordStewardMessage({
+        role: "owner",
+        projectName: "agent-fleet",
+        workspacePath: "/projects/agent-fleet",
+        goalId: null,
+        body: "Run a status check.",
+        conversationId: conversation.id,
+        transport: "im",
+        externalMessageId: "slack-message-1",
+        idempotencyKey: "slack-idempotency-1",
+        senderDisplay: "Owner via Slack",
+        deliveryStatus: "delivered"
+      });
+      const firstDelivery = await store.recordMessageDelivery({
+        conversationId: conversation.id,
+        stewardMessageId: message.id,
+        transport: "im",
+        direction: "inbound",
+        externalMessageId: "slack-message-1",
+        idempotencyKey: "slack-idempotency-1",
+        deliveryStatus: "delivered"
+      });
+      const duplicateByIdempotencyKey = await store.recordMessageDelivery({
+        conversationId: conversation.id,
+        stewardMessageId: null,
+        transport: "im",
+        direction: "inbound",
+        externalMessageId: "slack-message-2",
+        idempotencyKey: "slack-idempotency-1",
+        deliveryStatus: "delivered"
+      });
+      const duplicateByExternalMessageId = await store.recordMessageDelivery({
+        conversationId: conversation.id,
+        stewardMessageId: null,
+        transport: "im",
+        direction: "inbound",
+        externalMessageId: "slack-message-1",
+        idempotencyKey: "slack-idempotency-2",
+        deliveryStatus: "delivered"
+      });
+      const dashboard = await store.dashboard();
+
+      expect(firstDelivery).toMatchObject({
+        duplicate: false,
+        duplicateOf: null,
+        delivery: expect.objectContaining({
+          conversationId: conversation.id,
+          stewardMessageId: message.id,
+          externalMessageId: "slack-message-1",
+          idempotencyKey: "slack-idempotency-1"
+        })
+      });
+      expect(duplicateByIdempotencyKey).toMatchObject({
+        duplicate: true,
+        duplicateOf: firstDelivery.delivery.id,
+        delivery: expect.objectContaining({ id: firstDelivery.delivery.id })
+      });
+      expect(duplicateByExternalMessageId).toMatchObject({
+        duplicate: true,
+        duplicateOf: firstDelivery.delivery.id,
+        delivery: expect.objectContaining({ id: firstDelivery.delivery.id })
+      });
+      expect(dashboard.messageDeliveries).toEqual([
+        expect.objectContaining({
+          id: firstDelivery.delivery.id,
+          conversationId: conversation.id,
+          stewardMessageId: message.id
+        })
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
 });

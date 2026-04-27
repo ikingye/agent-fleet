@@ -9,6 +9,9 @@ export type AgentRole = "researcher" | "planner" | "worker" | "reviewer" | "deli
 export type ArtifactKind = "research" | "plan" | "worker_output" | "review" | "delivery";
 export type ReviewStatus = "passed" | "failed" | "needs_attention";
 export type DeliveryStatus = "delivered" | "failed";
+export type ConversationTransport = "web" | "cli" | "im" | "api";
+export type MessageDeliveryDirection = "inbound" | "outbound";
+export type MessageDeliveryStatus = "pending" | "delivered" | "failed" | "duplicate";
 export type StewardMessageRole = "owner" | "steward" | "worker" | "system";
 export type WorkerReportStatus = "DONE" | "DONE_WITH_CONCERNS" | "BLOCKED";
 export type GithubDeployKeyLeaseStatus = "active" | "released" | "stale";
@@ -196,12 +199,52 @@ export interface DeliveryReport {
   updatedAt: string;
 }
 
+export interface Conversation {
+  id: string;
+  transport: ConversationTransport;
+  projectName: string | null;
+  workspacePath: string | null;
+  externalConversationId: string | null;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationBinding {
+  id: string;
+  conversationId: string;
+  projectName: string | null;
+  workspacePath: string | null;
+  goalId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessageDelivery {
+  id: string;
+  conversationId: string;
+  stewardMessageId: string | null;
+  transport: ConversationTransport;
+  direction: MessageDeliveryDirection;
+  externalMessageId: string | null;
+  idempotencyKey: string | null;
+  deliveryStatus: MessageDeliveryStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface StewardMessage {
   id: string;
   role: StewardMessageRole;
   projectName: string | null;
   workspacePath: string | null;
   goalId: string | null;
+  conversationId?: string | null;
+  transport?: ConversationTransport | null;
+  externalMessageId?: string | null;
+  idempotencyKey?: string | null;
+  senderDisplay?: string | null;
+  deliveryStatus?: MessageDeliveryStatus | null;
   body: string;
   createdAt: string;
 }
@@ -249,6 +292,9 @@ export interface DashboardData {
   stewardCheckpoints: StewardCheckpoint[];
   workerReports?: WorkerReport[];
   stewardMessages?: StewardMessage[];
+  conversations?: Conversation[];
+  conversationBindings?: ConversationBinding[];
+  messageDeliveries?: MessageDelivery[];
   agentArtifacts: AgentArtifact[];
   reviews: ReviewResult[];
   deliveryReports: DeliveryReport[];
