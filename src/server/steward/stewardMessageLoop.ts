@@ -1,10 +1,10 @@
-import type { DashboardData, Goal, StewardMessage, WorkerSession } from "../../shared/types.js";
+import type { ConversationTransport, DashboardData, Goal, StewardMessage, WorkerSession } from "../../shared/types.js";
 import type { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import type { StewardRuntime } from "./stewardRuntime.js";
 
 export interface StewardOwnerMessageInput {
   conversationId?: string | null;
-  transport?: string | null;
+  transport?: ConversationTransport | null;
   externalMessageId?: string | null;
   idempotencyKey?: string | null;
   projectName: string | null;
@@ -28,7 +28,7 @@ const activeWorkerStatuses = new Set(["starting", "running", "paused"]);
 
 interface StewardMessageContext {
   conversationId: string | null;
-  transport: string | null;
+  transport: ConversationTransport | null;
 }
 
 export class StewardMessageLoop {

@@ -4,7 +4,7 @@ import type { StewardMessageLoop, StewardOwnerMessageResult } from "./stewardMes
 
 export interface ConversationOwnerMessageInput {
   conversationId: string;
-  transport: string;
+  transport: ConversationTransport;
   externalMessageId: string | null;
   idempotencyKey: string | null;
   projectName: string | null;
@@ -20,7 +20,7 @@ export interface ConversationOwnerMessageResult extends StewardOwnerMessageResul
 export interface ListConversationsFilter {
   projectName?: string;
   workspacePath?: string;
-  transport?: string;
+  transport?: ConversationTransport;
 }
 
 interface ConversationServiceOptions {
@@ -32,7 +32,7 @@ export class ConversationService {
   constructor(private readonly options: ConversationServiceOptions) {}
 
   async acceptOwnerMessage(input: ConversationOwnerMessageInput): Promise<ConversationOwnerMessageResult> {
-    const transport = requireConversationTransport(input.transport);
+    const transport = input.transport;
     const conversation = await this.options.store.upsertConversation({
       id: input.conversationId,
       transport,
@@ -106,12 +106,10 @@ export class ConversationService {
   }
 
   async listConversations(filter: ListConversationsFilter = {}): Promise<StewardConversation[]> {
-    const transport =
-      filter.transport === undefined ? undefined : requireConversationTransport(filter.transport);
     const messages = await this.options.store.listStewardMessages({
       projectName: filter.projectName,
       workspacePath: filter.workspacePath,
-      transport
+      transport: filter.transport
     });
     const conversations = new Map<string, StewardConversation>();
 
@@ -189,7 +187,7 @@ export class ConversationService {
   }
 }
 
-function requireConversationTransport(value: string): ConversationTransport {
+export function requireConversationTransport(value: string): ConversationTransport {
   if (value === "web" || value === "cli" || value === "im" || value === "api") {
     return value;
   }

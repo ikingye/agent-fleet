@@ -29,7 +29,11 @@ import { RemoteGithubDeployKeyProvisioner } from "../remote/remoteKeyProvisioner
 import { probeRemoteWorkerPid } from "../remote/remoteWorkerProbe.js";
 import { JsonControlPlaneStore } from "../store/jsonControlPlaneStore.js";
 import { buildStewardRecoveryReport } from "../steward/recoveryRuntime.js";
-import { ConversationService, type ConversationOwnerMessageInput } from "../steward/conversationService.js";
+import {
+  ConversationService,
+  requireConversationTransport,
+  type ConversationOwnerMessageInput
+} from "../steward/conversationService.js";
 import { createDashboardWorkerProcessProbe } from "../steward/remoteSupervisorRuntime.js";
 import { maintainGithubDeployKeyLeases } from "../steward/githubDeployKeyLeaseMaintenance.js";
 import { runStewardAutonomyTick } from "../steward/stewardAutonomyRuntime.js";
@@ -375,7 +379,7 @@ function conversationMessageInput(
 ): ConversationOwnerMessageInput {
   return {
     conversationId,
-    transport: optionalString(body.transport, "transport") ?? "api",
+    transport: requireConversationTransport(optionalString(body.transport, "transport") ?? "api"),
     externalMessageId: externalMessageIdFromEnvelope(body),
     idempotencyKey: optionalString(body.idempotencyKey, "idempotencyKey") ?? idempotencyKeyFromHeaders(headers),
     projectName: projectNameFromEnvelope(body),
@@ -450,7 +454,10 @@ export async function createApp(options: CreateAppOptions = {}) {
       const conversations = await conversationService.listConversations({
         projectName: optionalString(query.projectName, "projectName") ?? undefined,
         workspacePath: optionalString(query.workspacePath, "workspacePath") ?? undefined,
-        transport: optionalString(query.transport, "transport") ?? undefined
+        transport:
+          query.transport === undefined || query.transport === null
+            ? undefined
+            : requireConversationTransport(requireString(query.transport, "transport"))
       });
 
       return { conversations };
@@ -799,7 +806,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     try {
       return await conversationService.acceptOwnerMessage({
         conversationId: optionalString(body.conversationId, "conversationId") ?? "steward",
-        transport: optionalString(body.transport, "transport") ?? "web",
+        transport: requireConversationTransport(optionalString(body.transport, "transport") ?? "web"),
         externalMessageId: externalMessageIdFromEnvelope(body),
         idempotencyKey: optionalString(body.idempotencyKey, "idempotencyKey") ?? idempotencyKeyFromHeaders(request.headers),
         projectName: optionalString(body.projectName, "projectName"),
@@ -829,7 +836,10 @@ export async function createApp(options: CreateAppOptions = {}) {
         conversationId: optionalString(query.conversationId, "conversationId") ?? undefined,
         projectName: optionalString(query.projectName, "projectName") ?? undefined,
         workspacePath: optionalString(query.workspacePath, "workspacePath") ?? undefined,
-        transport: optionalString(query.transport, "transport") ?? undefined
+        transport:
+          query.transport === undefined || query.transport === null
+            ? undefined
+            : requireConversationTransport(requireString(query.transport, "transport"))
       });
 
       return { messages };
